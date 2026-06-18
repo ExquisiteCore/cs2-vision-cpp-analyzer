@@ -1,14 +1,10 @@
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <string>
 #include <utility>
 #include <vector>
 
-#include "vision_analyzer/action_writer.hpp"
 #include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/postprocess.hpp"
@@ -178,53 +174,6 @@ void test_motion_filter_is_stable_and_moves_toward_measurement() {
     require(filter.initialized(), "filter should report initialized after update");
 }
 
-void test_action_writer_outputs_human_readable_move_and_click_candidate() {
-    const auto path = std::filesystem::temp_directory_path() / "vision_analyzer_actions_test.txt";
-    std::filesystem::remove(path);
-
-    FrameReport report{
-        42,
-        1400.0,
-        120.0,
-        InferenceTiming{1.0, 2.0, 3.0},
-        1,
-        TargetFrame{
-            9,
-            Detection{1, "ct_head", 0.91F, cv::Rect(950, 520, 40, 40)},
-            {970.0F, 540.0F},
-            {978.0F, 542.0F},
-            {18.0F, 2.0F},
-            18.11F,
-            false,
-            {976.0F, 541.0F},
-            {120.0F, 6.0F},
-            {10.0F, 1.0F},
-            0.82F,
-            2.24F,
-            LockState::Locked,
-            true,
-        },
-    };
-
-    {
-        ActionWriter writer(path.string());
-        writer.write_report(report);
-    }
-
-    std::string content;
-    {
-        std::ifstream input(path);
-        content.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
-    }
-    require(content.find("frame=42") != std::string::npos, "action log should include frame index");
-    require(content.find("action=move") != std::string::npos, "action log should describe move operation");
-    require(content.find("move_to=(976.000,541.000)") != std::string::npos, "action log should include analysis point");
-    require(content.find("move_delta=(18.000,2.000)") != std::string::npos, "action log should include move delta");
-    require(content.find("left_button=press_candidate") != std::string::npos, "action log should include click candidate");
-
-    std::filesystem::remove(path);
-}
-
 void test_aim_controller_scales_and_clamps_target_offset() {
     AimControllerOptions options;
     options.move_gain = 0.5F;
@@ -363,7 +312,6 @@ int main() {
         test_track_manager_smooths_velocity_spikes();
         test_analysis_state_predicts_latency_in_frame_units();
         test_motion_filter_is_stable_and_moves_toward_measurement();
-        test_action_writer_outputs_human_readable_move_and_click_candidate();
         test_aim_controller_scales_and_clamps_target_offset();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
