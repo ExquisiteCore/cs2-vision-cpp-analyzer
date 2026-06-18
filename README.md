@@ -12,13 +12,15 @@ bridge SDK.
 
 ```powershell
 cd tools\cpp_analyzer
+xmake f --hid_sdk_root=D:\project\pi\test\sdk\cpp
 xmake
 xmake run vision_analyzer_tests
 ```
 
-The build expects the RP2350 HID bridge SDK at `D:\project\pi\test\sdk\cpp` by
-default. To use another checkout, set `RP2350_HID_BRIDGE_SDK` to the SDK root
-before building.
+The RP2350 HID bridge SDK is optional at build time. Provide it with
+`xmake f --hid_sdk_root=...` or the `RP2350_HID_BRIDGE_SDK` environment
+variable when live HID output is needed. ONNX Runtime is also optional and can
+be provided with `xmake f --onnxruntime_root=...` or `ONNXRUNTIME_ROOT`.
 
 ## Runtime Modes
 
@@ -31,16 +33,22 @@ Dry-run prints status without sending SDK commands:
 xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --dry-run --preview
 ```
 
+DXGI Desktop Duplication input captures a live Windows monitor:
+
+```powershell
+xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --dry-run --preview
+```
+
 Live SDK movement:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --player-side ct --hid-port COM3 --hid-gain 1.0 --hid-max-step 120 --preview
+xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3 --hid-gain 1.0 --hid-max-step 120 --preview
 ```
 
 Enable left-click candidates only after movement is calibrated:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --hid-port COM3 --hid-click --hid-click-cooldown 6
+xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --player-side ct --hid-port COM3 --hid-click --hid-click-cooldown 6
 ```
 
 Skip an intro/loading segment and process a short slice:
@@ -59,10 +67,9 @@ xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-tr
 --backend tensorrt     Reserved for native TensorRT C++ builds.
 ```
 
-The xmake file uses `ONNXRUNTIME_ROOT` when it is set. Otherwise it falls back to
-`D:\Tool\onnxruntime-win-x64-gpu-1.22.1` when that directory exists. If ONNX
-Runtime is not found, the OpenCV backend still builds and the ORT backends
-report unavailable at runtime.
+The xmake file uses the `onnxruntime_root` config value or `ONNXRUNTIME_ROOT`.
+If ONNX Runtime is not found, the OpenCV backend still builds and the ORT
+backends report unavailable at runtime.
 
 Use `xmake run` unless you have manually added the ONNX Runtime, CUDA/cuDNN, and
 TensorRT DLL directories to `PATH`. The xmake target sets the runtime paths for
@@ -80,9 +87,13 @@ performance checks, ignore the first few frames and compare warmed
 - Track IDs are assigned with IoU plus center-distance matching.
 - Target selection favors stable, close, high-confidence targets, with head
   preference and a switch penalty to reduce jitter.
-- The target point uses a One Euro filter and latency-compensated prediction.
+- The target point uses a 2D Kalman state (`x`, `y`, `vx`, `vy`) plus
+  latency-compensated prediction.
 - `--player-side ct` targets `t_body` and `t_head`; `--player-side t` targets
   `ct_body` and `ct_head`; `unknown` keeps all classes.
+- Live SDK output requires `--player-side ct` or `--player-side t`.
+- Only head classes can become left-click fire candidates; body classes can
+  help movement tracking but never trigger `--hid-click`.
 - `--hid-gain` scales the target offset before sending `mouse_move(dx, dy)`.
 - `--hid-max-step` clamps each movement axis per frame.
 - `--hid-click` enables left-click output when the planner reports a fire

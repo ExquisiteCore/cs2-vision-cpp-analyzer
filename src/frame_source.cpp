@@ -1,0 +1,273 @@
+#include "vision_analyzer/frame_source.hpp"
+
+#include <chrono>
+#include <iterator>
+#include <stdexcept>
+#include <utility>
+
+#include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <d3d11.h>
+#include <dxgi1_2.h>
+#include <wrl/client.h>
+#endif
+
+namespace vision_analyzer {
+namespace {
+
+[[nodiscard]] double now_ms() {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    return std::chrono::duration<double, std::milli>(now).count();
+}
+
+class VideoFrameSource final : public FrameSource {
+public:
+    explicit VideoFrameSource(const Options& options)
+        : capture_(options.video_path) {
+        if (!capture_.isOpened()) {
+            throw std::runtime_error("failed to open video: " + options.video_path);
+        }
+        if (options.start_time_seconds > 0.0) {
+            capture_.set(cv::CAP_PROP_POS_MSEC, options.start_time_seconds * 1000.0);
+        } else if (options.start_frame > 0) {
+            capture_.set(cv::CAP_PROP_POS_FRAMES, options.start_frame);
+        }
+    }
+
+    bool read(CapturedFrame& frame) override {
+        cv::Mat image;
+        if (!capture_.read(image)) {
+            return false;
+        }
+        frame = CapturedFrame{
+            std::move(image),
+            static_cast<int>(capture_.get(cv::CAP_PROP_POS_FRAMES)) - 1,
+            capture_.get(cv::CAP_PROP_POS_MSEC),
+        };
+        return true;
+    }
+
+    void release() override {
+        capture_.release();
+    }
+
+    std::string name() const override {
+        return "video";
+    }
+
+    bool is_live() const override {
+        return false;
+    }
+
+private:
+    cv::VideoCapture capture_;
+};
+
+#if defined(_WIN32)
+
+template <typename T>
+void throw_if_failed(T result, const char* message) {
+    if (FAILED(result)) {
+        throw std::runtime_error(message);
+    }
+}
+
+class DxgiFrameSource final : public FrameSource {
+public:
+    explicit DxgiFrameSource(const Options& options)
+        : adapter_index_(options.dxgi_adapter),
+          output_index_(options.dxgi_output),
+          timeout_ms_(options.dxgi_timeout_ms),
+          start_time_ms_(now_ms()) {
+        initialize();
+    }
+
+    bool read(CapturedFrame& frame) override {
+        for (;;) {
+            DXGI_OUTDUPL_FRAME_INFO frame_info{};
+            Microsoft::WRL::ComPtr<IDXGIResource> desktop_resource;
+            const HRESULT acquire_result = duplication_->AcquireNextFrame(
+                static_cast<UINT>(timeout_ms_),
+                &frame_info,
+                &desktop_resource
+            );
+            if (acquire_result == DXGI_ERROR_WAIT_TIMEOUT) {
+                continue;
+            }
+            if (acquire_result == DXGI_ERROR_ACCESS_LOST) {
+                initialize();
+                continue;
+            }
+            throw_if_failed(acquire_result, "DXGI AcquireNextFrame failed");
+
+            try {
+                Microsoft::WRL::ComPtr<ID3D11Texture2D> desktop_texture;
+                throw_if_failed(desktop_resource.As(&desktop_texture), "DXGI frame is not a D3D11 texture");
+                copy_texture_to_frame(desktop_texture.Get(), frame);
+                duplication_->ReleaseFrame();
+                return true;
+            } catch (...) {
+                duplication_->ReleaseFrame();
+                throw;
+            }
+        }
+    }
+
+    void release() override {
+        staging_texture_.Reset();
+        duplication_.Reset();
+        context_.Reset();
+        device_.Reset();
+    }
+
+    std::string name() const override {
+        return "dxgi";
+    }
+
+    bool is_live() const override {
+        return true;
+    }
+
+private:
+    void initialize() {
+        staging_texture_.Reset();
+        duplication_.Reset();
+        context_.Reset();
+        device_.Reset();
+
+        Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+        throw_if_failed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "CreateDXGIFactory1 failed");
+
+        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(static_cast<UINT>(adapter_index_), &adapter) == DXGI_ERROR_NOT_FOUND) {
+            throw std::runtime_error("DXGI adapter index is unavailable");
+        }
+
+        Microsoft::WRL::ComPtr<IDXGIOutput> output;
+        if (adapter->EnumOutputs(static_cast<UINT>(output_index_), &output) == DXGI_ERROR_NOT_FOUND) {
+            throw std::runtime_error("DXGI output index is unavailable");
+        }
+
+        Microsoft::WRL::ComPtr<IDXGIOutput1> output1;
+        throw_if_failed(output.As(&output1), "DXGI output does not support desktop duplication");
+
+        const D3D_FEATURE_LEVEL requested_levels[] = {
+            D3D_FEATURE_LEVEL_11_1,
+            D3D_FEATURE_LEVEL_11_0,
+            D3D_FEATURE_LEVEL_10_1,
+            D3D_FEATURE_LEVEL_10_0,
+        };
+        D3D_FEATURE_LEVEL selected_level{};
+        throw_if_failed(
+            D3D11CreateDevice(
+                adapter.Get(),
+                D3D_DRIVER_TYPE_UNKNOWN,
+                nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                requested_levels,
+                static_cast<UINT>(std::size(requested_levels)),
+                D3D11_SDK_VERSION,
+                &device_,
+                &selected_level,
+                &context_
+            ),
+            "D3D11CreateDevice failed"
+        );
+        (void)selected_level;
+
+        throw_if_failed(output1->DuplicateOutput(device_.Get(), &duplication_), "DXGI DuplicateOutput failed");
+    }
+
+    void ensure_staging_texture(const D3D11_TEXTURE2D_DESC& source_desc) {
+        if (staging_texture_) {
+            D3D11_TEXTURE2D_DESC current_desc{};
+            staging_texture_->GetDesc(&current_desc);
+            if (current_desc.Width == source_desc.Width && current_desc.Height == source_desc.Height &&
+                current_desc.Format == source_desc.Format) {
+                return;
+            }
+            staging_texture_.Reset();
+        }
+
+        D3D11_TEXTURE2D_DESC staging_desc = source_desc;
+        staging_desc.BindFlags = 0;
+        staging_desc.MiscFlags = 0;
+        staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        staging_desc.Usage = D3D11_USAGE_STAGING;
+        throw_if_failed(device_->CreateTexture2D(&staging_desc, nullptr, &staging_texture_), "CreateTexture2D staging failed");
+    }
+
+    void copy_texture_to_frame(ID3D11Texture2D* texture, CapturedFrame& frame) {
+        D3D11_TEXTURE2D_DESC desc{};
+        texture->GetDesc(&desc);
+        ensure_staging_texture(desc);
+        context_->CopyResource(staging_texture_.Get(), texture);
+
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        throw_if_failed(context_->Map(staging_texture_.Get(), 0, D3D11_MAP_READ, 0, &mapped), "Map DXGI staging texture failed");
+        cv::Mat bgra(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_8UC4, mapped.pData, mapped.RowPitch);
+        cv::Mat bgr;
+        cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
+        context_->Unmap(staging_texture_.Get(), 0);
+
+        frame = CapturedFrame{
+            std::move(bgr),
+            frame_index_++,
+            now_ms() - start_time_ms_,
+        };
+    }
+
+    int adapter_index_ = 0;
+    int output_index_ = 0;
+    int timeout_ms_ = 16;
+    int frame_index_ = 0;
+    double start_time_ms_ = 0.0;
+    Microsoft::WRL::ComPtr<ID3D11Device> device_;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
+    Microsoft::WRL::ComPtr<IDXGIOutputDuplication> duplication_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging_texture_;
+};
+
+#else
+
+class DxgiFrameSource final : public FrameSource {
+public:
+    explicit DxgiFrameSource(const Options&) {
+        throw std::runtime_error("DXGI input is only available on Windows");
+    }
+
+    bool read(CapturedFrame&) override {
+        return false;
+    }
+
+    void release() override {}
+
+    std::string name() const override {
+        return "dxgi-unavailable";
+    }
+
+    bool is_live() const override {
+        return true;
+    }
+};
+
+#endif
+
+}  // namespace
+
+std::unique_ptr<FrameSource> create_frame_source(const Options& options) {
+    switch (options.input_source) {
+    case InputSource::Video:
+        return std::make_unique<VideoFrameSource>(options);
+    case InputSource::Dxgi:
+        return std::make_unique<DxgiFrameSource>(options);
+    }
+    throw std::runtime_error("unknown input source");
+}
+
+}  // namespace vision_analyzer

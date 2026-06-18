@@ -3,6 +3,8 @@
 #include <optional>
 #include <vector>
 
+#include <opencv2/video/tracking.hpp>
+
 #include "vision_analyzer/types.hpp"
 
 namespace vision_analyzer {
@@ -75,6 +77,7 @@ public:
     MotionFilter2D();
 
     [[nodiscard]] cv::Point2f update(const cv::Point2f& measurement, double timestamp_ms);
+    [[nodiscard]] cv::Point2f predict(double lookahead_ms) const;
     void reset();
 
     [[nodiscard]] cv::Point2f velocity() const;
@@ -82,8 +85,9 @@ public:
     [[nodiscard]] bool initialized() const;
 
 private:
-    OneEuroFilter x_filter_;
-    OneEuroFilter y_filter_;
+    void configure_filter(float dt_seconds);
+
+    cv::KalmanFilter filter_;
     bool initialized_ = false;
     double previous_timestamp_ms_ = 0.0;
     cv::Point2f previous_point_;

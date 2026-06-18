@@ -93,17 +93,22 @@ std::vector<Detection> decode_yolo_output(
         throw std::runtime_error("unexpected YOLO output rank: " + std::to_string(output.dims));
     }
 
+    const int expected_dimensions = 4 + static_cast<int>(names.size());
     int dimensions = output.size[1];
     int rows = output.size[2];
     bool channels_first = true;
-    if (dimensions < 4 + static_cast<int>(names.size()) && rows >= 4 + static_cast<int>(names.size())) {
+    if (output.size[1] == expected_dimensions) {
+        dimensions = output.size[1];
+        rows = output.size[2];
+        channels_first = true;
+    } else if (output.size[2] == expected_dimensions) {
         dimensions = output.size[2];
         rows = output.size[1];
         channels_first = false;
+    } else {
+        dimensions = std::min(output.size[1], output.size[2]);
     }
-    if (dimensions < 4 + static_cast<int>(names.size())) {
-        throw std::runtime_error("unexpected YOLO output dimensions");
-    }
+    validate_model_class_schema(dimensions);
 
     const float* data = reinterpret_cast<const float*>(output.data);
 

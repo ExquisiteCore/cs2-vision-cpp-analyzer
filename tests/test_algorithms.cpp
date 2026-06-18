@@ -60,6 +60,44 @@ void test_enemy_filter_keeps_opposing_side_only() {
     require(unknown_targets.size() == detections.size(), "unknown player side should keep all detections");
 }
 
+void test_model_class_schema_rejects_wrong_output_dimensions() {
+    validate_model_class_schema(8);
+
+    bool rejected = false;
+    try {
+        validate_model_class_schema(84);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "model class schema should reject COCO-style output dimensions");
+}
+
+void test_decode_yolo_output_accepts_channels_last_shape() {
+    const int sizes[] = {1, 1, 8};
+    cv::Mat output(3, sizes, CV_32F);
+    float* data = output.ptr<float>();
+    data[0] = 100.0F;
+    data[1] = 100.0F;
+    data[2] = 20.0F;
+    data[3] = 20.0F;
+    data[4] = 0.10F;
+    data[5] = 0.95F;
+    data[6] = 0.20F;
+    data[7] = 0.30F;
+
+    const auto detections = decode_yolo_output(output, LetterboxResult{cv::Mat{}, 1.0F, 0, 0}, cv::Size(640, 640), 0.25F, 0.45F);
+
+    require(detections.size() == 1, "channels-last YOLO output should decode one detection");
+    require(detections[0].class_id == 1, "channels-last YOLO output should keep best class");
+    require(detections[0].label == "ct_head", "channels-last YOLO output should use class schema label");
+}
+
+void test_input_source_parser_accepts_video_and_dxgi() {
+    require(parse_input_source("video") == InputSource::Video, "input parser should accept video");
+    require(parse_input_source("dxgi") == InputSource::Dxgi, "input parser should accept dxgi");
+    require(input_source_name(InputSource::Dxgi) == "dxgi", "input source name should report dxgi");
+}
+
 void test_track_manager_keeps_id_for_small_motion() {
     TrackManager manager;
     const cv::Size frame_size(1920, 1080);
@@ -235,6 +273,41 @@ void test_motion_filter_is_stable_and_moves_toward_measurement() {
     require(filter.initialized(), "filter should report initialized after update");
 }
 
+void test_motion_filter_predicts_with_kalman_velocity() {
+    MotionFilter2D filter;
+    (void)filter.update({100.0F, 100.0F}, 0.0);
+    (void)filter.update({140.0F, 100.0F}, 16.0);
+    const auto prediction = filter.predict(16.0);
+
+    require(prediction.x > 100.0F, "kalman prediction should move in the observed direction");
+    require_near(prediction.y, 100.0F, 2.0F, "kalman prediction should keep y stable for horizontal motion");
+}
+
+void test_analysis_state_never_fires_for_body_class() {
+    AnalysisState state;
+    const cv::Size frame_size(1920, 1080);
+    const TrackedDetection selected{
+        4,
+        Detection{0, "ct_body", 0.95F, cv::Rect(930, 500, 60, 100)},
+        {960.0F, 540.0F},
+        {960.0F, 540.0F},
+        {0.0F, 0.0F},
+        10,
+        10,
+        0,
+        0.95F,
+        0.90F,
+    };
+
+    TargetFrame report{};
+    report = state.update(selected, frame_size, 0.0, 0.0);
+    report = state.update(selected, frame_size, 16.0, 0.0);
+    report = state.update(selected, frame_size, 32.0, 0.0);
+
+    require(report.lock_state == LockState::Locked, "body can still reach lock state for movement tracking");
+    require(!report.fire_candidate, "body class should never become a fire candidate");
+}
+
 void test_aim_controller_scales_and_clamps_target_offset() {
     AimControllerOptions options;
     options.move_gain = 0.5F;
@@ -368,6 +441,9 @@ int main() {
     try {
         test_class_aware_nms_keeps_overlapping_different_classes();
         test_enemy_filter_keeps_opposing_side_only();
+        test_model_class_schema_rejects_wrong_output_dimensions();
+        test_decode_yolo_output_accepts_channels_last_shape();
+        test_input_source_parser_accepts_video_and_dxgi();
         test_track_manager_keeps_id_for_small_motion();
         test_target_selector_prefers_active_track_when_scores_are_close();
         test_target_selector_switches_when_challenger_is_clearly_better();
@@ -375,6 +451,8 @@ int main() {
         test_analysis_state_predicts_latency_in_frame_units();
         test_analysis_state_offsets_from_filtered_analysis_point();
         test_motion_filter_is_stable_and_moves_toward_measurement();
+        test_motion_filter_predicts_with_kalman_velocity();
+        test_analysis_state_never_fires_for_body_class();
         test_aim_controller_scales_and_clamps_target_offset();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();

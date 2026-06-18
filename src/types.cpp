@@ -1,5 +1,6 @@
 #include "vision_analyzer/types.hpp"
 
+#include <sstream>
 #include <stdexcept>
 
 namespace vision_analyzer {
@@ -99,6 +100,39 @@ std::string backend_name(Backend backend) {
         return "tensorrt";
     }
     throw std::runtime_error("unknown backend");
+}
+
+InputSource parse_input_source(const std::string& value) {
+    if (value == "video") {
+        return InputSource::Video;
+    }
+    if (value == "dxgi") {
+        return InputSource::Dxgi;
+    }
+    throw std::runtime_error("unknown input source: " + value);
+}
+
+std::string input_source_name(InputSource source) {
+    switch (source) {
+    case InputSource::Video:
+        return "video";
+    case InputSource::Dxgi:
+        return "dxgi";
+    }
+    throw std::runtime_error("unknown input source");
+}
+
+void validate_model_class_schema(int output_dimensions) {
+    const int expected = 4 + static_cast<int>(class_names().size());
+    if (output_dimensions != expected) {
+        std::ostringstream message;
+        message << "model class schema mismatch: expected " << class_names().size()
+                << " classes (" << class_names()[0] << ", " << class_names()[1]
+                << ", " << class_names()[2] << ", " << class_names()[3]
+                << ") with YOLO output dimension " << expected
+                << ", got output dimension " << output_dimensions;
+        throw std::runtime_error(message.str());
+    }
 }
 
 }  // namespace vision_analyzer

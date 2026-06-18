@@ -16,6 +16,7 @@
 
 #include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/detector.hpp"
+#include "vision_analyzer/frame_source.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/tracking.hpp"
 
@@ -37,6 +38,15 @@ namespace {
             options.model_path = require_value(key);
         } else if (key == "--video") {
             options.video_path = require_value(key);
+            options.input_source = InputSource::Video;
+        } else if (key == "--input") {
+            options.input_source = parse_input_source(require_value(key));
+        } else if (key == "--dxgi-adapter") {
+            options.dxgi_adapter = std::stoi(require_value(key));
+        } else if (key == "--dxgi-output") {
+            options.dxgi_output = std::stoi(require_value(key));
+        } else if (key == "--dxgi-timeout") {
+            options.dxgi_timeout_ms = std::stoi(require_value(key));
         } else if (key == "--hid-port") {
             options.hid_port = require_value(key);
         } else if (key == "--hid-gain") {
@@ -71,8 +81,13 @@ namespace {
             options.status_every_frames = std::stoi(require_value(key));
         } else if (key == "--help" || key == "-h") {
             std::cout
-                << "vision_analyzer --backend opencv-onnx --model best.onnx --video input.mp4 (--hid-port COMx | --dry-run) [--preview]\n"
+                << "vision_analyzer --backend opencv-onnx --model best.onnx (--video input.mp4 | --input dxgi) (--hid-port COMx | --dry-run) [--preview]\n"
                 << "  --backend NAME    opencv-onnx, opencv-cuda, ort-cuda, ort-tensorrt, or tensorrt\n"
+                << "  --input NAME      video or dxgi; --video also selects video input\n"
+                << "  --video PATH      video file for offline tuning\n"
+                << "  --dxgi-adapter N  DXGI adapter index for desktop duplication, default 0\n"
+                << "  --dxgi-output N   DXGI output/monitor index for desktop duplication, default 0\n"
+                << "  --dxgi-timeout N  DXGI frame wait timeout in ms, default 16\n"
                 << "  --hid-port COMx   send relative mouse moves through the RP2350 HID bridge SDK\n"
                 << "  --hid-gain 1.0    multiply target offset before sending relative mouse movement\n"
                 << "  --hid-max-step N  clamp each relative mouse move axis to +/-N, default 120\n"
@@ -99,8 +114,17 @@ void validate_options(const Options& options) {
     if (options.hid_port.empty() && !options.dry_run) {
         throw std::runtime_error("use --hid-port COMx for live SDK output or --dry-run for tuning");
     }
+    if (!options.dry_run && options.player_side == PlayerSide::Unknown) {
+        throw std::runtime_error("live SDK output requires --player-side ct or --player-side t");
+    }
     if (options.status_every_frames <= 0) {
         throw std::runtime_error("--status-every must be greater than 0");
+    }
+    if (options.dxgi_adapter < 0 || options.dxgi_output < 0) {
+        throw std::runtime_error("--dxgi-adapter and --dxgi-output must be greater than or equal to 0");
+    }
+    if (options.dxgi_timeout_ms <= 0) {
+        throw std::runtime_error("--dxgi-timeout must be greater than 0");
     }
 }
 
@@ -151,15 +175,7 @@ void draw_overlay(cv::Mat& frame, const std::vector<Detection>& detections, cons
 }
 
 void run(const Options& options) {
-    cv::VideoCapture capture(options.video_path);
-    if (!capture.isOpened()) {
-        throw std::runtime_error("failed to open video: " + options.video_path);
-    }
-    if (options.start_time_seconds > 0.0) {
-        capture.set(cv::CAP_PROP_POS_MSEC, options.start_time_seconds * 1000.0);
-    } else if (options.start_frame > 0) {
-        capture.set(cv::CAP_PROP_POS_FRAMES, options.start_frame);
-    }
+    auto frame_source = create_frame_source(options);
 
     auto detector = create_detector(options.backend, options.model_path);
     if (options.warmup_frames > 0) {
@@ -202,13 +218,17 @@ void run(const Options& options) {
     auto last_time = std::chrono::steady_clock::now();
     double fps = 0.0;
 
-    std::cout << "backend=" << detector->name() << " model=" << options.model_path << '\n';
+    std::cout << "backend=" << detector->name()
+              << " input=" << frame_source->name()
+              << " model=" << options.model_path << '\n';
 
-    while (capture.read(frame)) {
+    CapturedFrame captured_frame;
+    while (frame_source->read(captured_frame)) {
         if (options.max_frames > 0 && processed_index >= options.max_frames) {
             break;
         }
 
+        frame = captured_frame.image;
         const auto detection_result = detector->detect(frame, options.confidence, options.nms_threshold);
         const auto enemy_detections = filter_enemy_detections(detection_result.detections, options.player_side);
         const auto tracks = track_manager.update(enemy_detections, frame.size());
@@ -223,8 +243,8 @@ void run(const Options& options) {
         last_time = now;
 
         FrameReport report{
-            static_cast<int>(capture.get(cv::CAP_PROP_POS_FRAMES)) - 1,
-            capture.get(cv::CAP_PROP_POS_MSEC),
+            captured_frame.index,
+            captured_frame.timestamp_ms,
             fps,
             detection_result.timing,
             static_cast<int>(enemy_detections.size()),
@@ -268,6 +288,7 @@ void run(const Options& options) {
     if (hid_sender) {
         hid_sender->stop_all();
     }
+    frame_source->release();
 }
 
 }  // namespace

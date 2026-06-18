@@ -32,9 +32,18 @@ enum class PlayerSide {
     T,
 };
 
+enum class InputSource {
+    Video,
+    Dxgi,
+};
+
 struct Options {
     std::string model_path = "../../runs/detect/train/weights/best.onnx";
     std::string video_path = "../../videos/02.mp4";
+    InputSource input_source = InputSource::Video;
+    int dxgi_adapter = 0;
+    int dxgi_output = 0;
+    int dxgi_timeout_ms = 16;
     std::string hid_port;
     float hid_move_gain = 1.0F;
     int hid_max_step = 120;
@@ -130,5 +139,8 @@ struct FrameReport {
 [[nodiscard]] std::string backend_name(Backend backend);
 [[nodiscard]] PlayerSide parse_player_side(const std::string& value);
 [[nodiscard]] std::string player_side_name(PlayerSide side);
+[[nodiscard]] InputSource parse_input_source(const std::string& value);
+[[nodiscard]] std::string input_source_name(InputSource source);
+void validate_model_class_schema(int output_dimensions);
 
 }  // namespace vision_analyzer

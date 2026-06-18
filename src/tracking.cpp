@@ -235,35 +235,62 @@ void OneEuroFilter::reset() {
 }
 
 MotionFilter2D::MotionFilter2D()
-    : x_filter_(1.7, 0.008, 1.0),
-      y_filter_(1.7, 0.008, 1.0) {}
+    : filter_(4, 2, 0, CV_32F) {
+    configure_filter(1.0F / 60.0F);
+    cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(8.0F));
+}
 
 cv::Point2f MotionFilter2D::update(const cv::Point2f& measurement, double timestamp_ms) {
-    const double timestamp_seconds = timestamp_ms / 1000.0;
-    const cv::Point2f filtered(
-        static_cast<float>(x_filter_.update(measurement.x, timestamp_seconds)),
-        static_cast<float>(y_filter_.update(measurement.y, timestamp_seconds))
-    );
-
+    float dt = 1.0F / 60.0F;
     if (initialized_) {
-        const float dt = static_cast<float>(std::max(1e-3, (timestamp_ms - previous_timestamp_ms_) / 1000.0));
-        const cv::Point2f new_velocity = (filtered - previous_point_) / dt;
-        acceleration_ = (new_velocity - velocity_) / dt;
-        velocity_ = new_velocity;
-    } else {
-        initialized_ = true;
+        dt = static_cast<float>(std::clamp((timestamp_ms - previous_timestamp_ms_) / 1000.0, 1e-3, 0.25));
+    }
+    configure_filter(dt);
+
+    if (!initialized_) {
+        filter_.statePost.at<float>(0) = measurement.x;
+        filter_.statePost.at<float>(1) = measurement.y;
+        filter_.statePost.at<float>(2) = 0.0F;
+        filter_.statePost.at<float>(3) = 0.0F;
+        cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(8.0F));
+        previous_point_ = measurement;
+        previous_timestamp_ms_ = timestamp_ms;
         velocity_ = {0.0F, 0.0F};
         acceleration_ = {0.0F, 0.0F};
+        initialized_ = true;
+        return measurement;
     }
+
+    filter_.predict();
+    cv::Mat measurement_vector(2, 1, CV_32F);
+    measurement_vector.at<float>(0) = measurement.x;
+    measurement_vector.at<float>(1) = measurement.y;
+    const cv::Mat corrected = filter_.correct(measurement_vector);
+
+    const cv::Point2f filtered(corrected.at<float>(0), corrected.at<float>(1));
+    const cv::Point2f new_velocity(corrected.at<float>(2), corrected.at<float>(3));
+    acceleration_ = (new_velocity - velocity_) / dt;
+    velocity_ = new_velocity;
 
     previous_timestamp_ms_ = timestamp_ms;
     previous_point_ = filtered;
     return filtered;
 }
 
+cv::Point2f MotionFilter2D::predict(double lookahead_ms) const {
+    if (!initialized_) {
+        return previous_point_;
+    }
+    const float dt = static_cast<float>(std::max(0.0, lookahead_ms) / 1000.0);
+    return {
+        filter_.statePost.at<float>(0) + filter_.statePost.at<float>(2) * dt,
+        filter_.statePost.at<float>(1) + filter_.statePost.at<float>(3) * dt,
+    };
+}
+
 void MotionFilter2D::reset() {
-    x_filter_.reset();
-    y_filter_.reset();
+    configure_filter(1.0F / 60.0F);
+    cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(8.0F));
     initialized_ = false;
     previous_timestamp_ms_ = 0.0;
     previous_point_ = {0.0F, 0.0F};
@@ -281,6 +308,19 @@ cv::Point2f MotionFilter2D::acceleration() const {
 
 bool MotionFilter2D::initialized() const {
     return initialized_;
+}
+
+void MotionFilter2D::configure_filter(float dt_seconds) {
+    filter_.transitionMatrix = (cv::Mat_<float>(4, 4) <<
+        1.0F, 0.0F, dt_seconds, 0.0F,
+        0.0F, 1.0F, 0.0F, dt_seconds,
+        0.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 1.0F);
+    filter_.measurementMatrix = cv::Mat::zeros(2, 4, CV_32F);
+    filter_.measurementMatrix.at<float>(0, 0) = 1.0F;
+    filter_.measurementMatrix.at<float>(1, 1) = 1.0F;
+    cv::setIdentity(filter_.processNoiseCov, cv::Scalar::all(0.08F));
+    cv::setIdentity(filter_.measurementNoiseCov, cv::Scalar::all(6.0F));
 }
 
 TargetFrame AnalysisState::update(
@@ -308,7 +348,8 @@ TargetFrame AnalysisState::update(
         std::clamp(latency_ms / std::max(1.0, frame_interval_ema_ms_), 0.0, 2.0)
     );
     const cv::Point2f predicted = selected.center + selected.velocity * latency_frames;
-    const cv::Point2f analysis_point = filter_.update(predicted, timestamp_ms);
+    (void)filter_.update(predicted, timestamp_ms);
+    const cv::Point2f analysis_point = filter_.predict(latency_ms);
     const cv::Point2f offset = analysis_point - frame_center;
     const float distance = point_distance(analysis_point, frame_center);
     const float lock_radius = is_head(selected.detection.class_id) ? 18.0F : 30.0F;
@@ -327,9 +368,10 @@ TargetFrame AnalysisState::update(
     }
 
     const bool fire_candidate =
+        is_head(selected.detection.class_id) &&
         lock_state == LockState::Locked &&
         locked_frames_ >= 3 &&
-        selected.confidence_ema >= (is_head(selected.detection.class_id) ? 0.48F : 0.58F);
+        selected.confidence_ema >= 0.48F;
 
     return TargetFrame{
         selected.track_id,
