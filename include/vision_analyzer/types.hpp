@@ -26,6 +26,12 @@ enum class LockState {
     Lost,
 };
 
+enum class PlayerSide {
+    Unknown,
+    Ct,
+    T,
+};
+
 struct Options {
     std::string model_path = "../../runs/detect/train/weights/best.onnx";
     std::string video_path = "../../videos/02.mp4";
@@ -34,6 +40,7 @@ struct Options {
     int hid_max_step = 120;
     bool hid_click_enabled = false;
     int hid_click_cooldown_frames = 6;
+    PlayerSide player_side = PlayerSide::Unknown;
     bool dry_run = false;
     int status_every_frames = 30;
     Backend backend = Backend::OpenCvOnnx;
@@ -117,7 +124,11 @@ struct FrameReport {
 [[nodiscard]] const std::vector<std::string>& class_names();
 [[nodiscard]] bool is_head(int class_id);
 [[nodiscard]] bool is_body(int class_id);
+[[nodiscard]] bool is_enemy_class(PlayerSide player_side, int class_id);
+[[nodiscard]] std::vector<Detection> filter_enemy_detections(const std::vector<Detection>& detections, PlayerSide player_side);
 [[nodiscard]] std::string lock_state_name(LockState state);
 [[nodiscard]] std::string backend_name(Backend backend);
+[[nodiscard]] PlayerSide parse_player_side(const std::string& value);
+[[nodiscard]] std::string player_side_name(PlayerSide side);
 
 }  // namespace vision_analyzer

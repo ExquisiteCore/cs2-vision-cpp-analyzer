@@ -41,6 +41,25 @@ void test_class_aware_nms_keeps_overlapping_different_classes() {
     require((keep[0] == 2 || keep[1] == 2), "class-aware NMS should keep overlapping body");
 }
 
+void test_enemy_filter_keeps_opposing_side_only() {
+    const std::vector<Detection> detections = {
+        Detection{0, "ct_body", 0.81F, cv::Rect(100, 100, 40, 90)},
+        Detection{1, "ct_head", 0.82F, cv::Rect(110, 80, 28, 28)},
+        Detection{2, "t_body", 0.83F, cv::Rect(300, 100, 40, 90)},
+        Detection{3, "t_head", 0.84F, cv::Rect(310, 80, 28, 28)},
+    };
+
+    const auto ct_targets = filter_enemy_detections(detections, PlayerSide::Ct);
+    const auto t_targets = filter_enemy_detections(detections, PlayerSide::T);
+    const auto unknown_targets = filter_enemy_detections(detections, PlayerSide::Unknown);
+
+    require(ct_targets.size() == 2, "CT player should keep T detections only");
+    require(ct_targets[0].class_id == 2 && ct_targets[1].class_id == 3, "CT player should target T body/head");
+    require(t_targets.size() == 2, "T player should keep CT detections only");
+    require(t_targets[0].class_id == 0 && t_targets[1].class_id == 1, "T player should target CT body/head");
+    require(unknown_targets.size() == detections.size(), "unknown player side should keep all detections");
+}
+
 void test_track_manager_keeps_id_for_small_motion() {
     TrackManager manager;
     const cv::Size frame_size(1920, 1080);
@@ -160,6 +179,48 @@ void test_analysis_state_predicts_latency_in_frame_units() {
     const auto report = state.update(selected, frame_size, 33.333, 16.667);
     require_near(report.predicted_center.x, 975.0F, 0.75F, "latency prediction should use frame units");
     require_near(report.predicted_center.y, 540.0F, 0.01F, "latency prediction should keep y when y velocity is zero");
+}
+
+void test_analysis_state_offsets_from_filtered_analysis_point() {
+    AnalysisState state;
+    const cv::Size frame_size(1920, 1080);
+    const TrackedDetection first{
+        4,
+        Detection{1, "ct_head", 0.90F, cv::Rect(940, 520, 40, 40)},
+        {960.0F, 540.0F},
+        {960.0F, 540.0F},
+        {0.0F, 0.0F},
+        5,
+        5,
+        0,
+        0.90F,
+        0.80F,
+    };
+    const TrackedDetection second{
+        4,
+        Detection{1, "ct_head", 0.92F, cv::Rect(1040, 520, 40, 40)},
+        {1060.0F, 540.0F},
+        {1060.0F, 540.0F},
+        {0.0F, 0.0F},
+        6,
+        6,
+        0,
+        0.91F,
+        0.85F,
+    };
+
+    (void)state.update(first, frame_size, 0.0, 0.0);
+    const auto report = state.update(second, frame_size, 16.0, 0.0);
+    const cv::Point2f frame_center(frame_size.width / 2.0F, frame_size.height / 2.0F);
+
+    require_near(
+        report.offset.x,
+        report.analysis_point.x - frame_center.x,
+        0.01F,
+        "target offset should use filtered analysis point"
+    );
+    require(std::abs(report.offset.x - (report.predicted_center.x - frame_center.x)) > 1.0F,
+            "filtered offset should differ from raw predicted jump");
 }
 
 void test_motion_filter_is_stable_and_moves_toward_measurement() {
@@ -306,11 +367,13 @@ void test_hid_action_sender_executes_aim_command() {
 int main() {
     try {
         test_class_aware_nms_keeps_overlapping_different_classes();
+        test_enemy_filter_keeps_opposing_side_only();
         test_track_manager_keeps_id_for_small_motion();
         test_target_selector_prefers_active_track_when_scores_are_close();
         test_target_selector_switches_when_challenger_is_clearly_better();
         test_track_manager_smooths_velocity_spikes();
         test_analysis_state_predicts_latency_in_frame_units();
+        test_analysis_state_offsets_from_filtered_analysis_point();
         test_motion_filter_is_stable_and_moves_toward_measurement();
         test_aim_controller_scales_and_clamps_target_offset();
         test_aim_controller_holds_when_no_target();

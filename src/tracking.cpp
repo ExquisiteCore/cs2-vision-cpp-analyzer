@@ -309,8 +309,8 @@ TargetFrame AnalysisState::update(
     );
     const cv::Point2f predicted = selected.center + selected.velocity * latency_frames;
     const cv::Point2f analysis_point = filter_.update(predicted, timestamp_ms);
-    const cv::Point2f offset = predicted - frame_center;
-    const float distance = point_distance(predicted, frame_center);
+    const cv::Point2f offset = analysis_point - frame_center;
+    const float distance = point_distance(analysis_point, frame_center);
     const float lock_radius = is_head(selected.detection.class_id) ? 18.0F : 30.0F;
 
     if (distance <= lock_radius) {

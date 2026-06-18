@@ -34,7 +34,7 @@ xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-tr
 Live SDK movement:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --hid-port COM3 --hid-gain 1.0 --hid-max-step 120 --preview
+xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --player-side ct --hid-port COM3 --hid-gain 1.0 --hid-max-step 120 --preview
 ```
 
 Enable left-click candidates only after movement is calibrated:
@@ -60,7 +60,9 @@ xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-tr
 ```
 
 The xmake file uses `ONNXRUNTIME_ROOT` when it is set. Otherwise it falls back to
-`D:\Tool\onnxruntime-win-x64-gpu-1.22.1`.
+`D:\Tool\onnxruntime-win-x64-gpu-1.22.1` when that directory exists. If ONNX
+Runtime is not found, the OpenCV backend still builds and the ORT backends
+report unavailable at runtime.
 
 Use `xmake run` unless you have manually added the ONNX Runtime, CUDA/cuDNN, and
 TensorRT DLL directories to `PATH`. The xmake target sets the runtime paths for
@@ -79,6 +81,8 @@ performance checks, ignore the first few frames and compare warmed
 - Target selection favors stable, close, high-confidence targets, with head
   preference and a switch penalty to reduce jitter.
 - The target point uses a One Euro filter and latency-compensated prediction.
+- `--player-side ct` targets `t_body` and `t_head`; `--player-side t` targets
+  `ct_body` and `ct_head`; `unknown` keeps all classes.
 - `--hid-gain` scales the target offset before sending `mouse_move(dx, dy)`.
 - `--hid-max-step` clamps each movement axis per frame.
 - `--hid-click` enables left-click output when the planner reports a fire

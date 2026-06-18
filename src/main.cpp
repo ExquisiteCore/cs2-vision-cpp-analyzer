@@ -47,6 +47,8 @@ namespace {
             options.hid_click_enabled = true;
         } else if (key == "--hid-click-cooldown") {
             options.hid_click_cooldown_frames = std::stoi(require_value(key));
+        } else if (key == "--player-side") {
+            options.player_side = parse_player_side(require_value(key));
         } else if (key == "--backend") {
             options.backend = parse_backend(require_value(key));
         } else if (key == "--conf") {
@@ -76,6 +78,7 @@ namespace {
                 << "  --hid-max-step N  clamp each relative mouse move axis to +/-N, default 120\n"
                 << "  --hid-click       send left click when fire_candidate is true\n"
                 << "  --hid-click-cooldown N  minimum frame cooldown between SDK left clicks, default 6\n"
+                << "  --player-side SIDE  unknown, ct, or t; ct targets T classes, t targets CT classes\n"
                 << "  --dry-run         run detection and planning without SDK output\n"
                 << "  --status-every N  print one status line every N processed frames, default 30\n"
                 << "  --conf 0.25       confidence threshold\n"
@@ -181,12 +184,14 @@ void run(const Options& options) {
         std::cout << "hid_port=" << options.hid_port
                   << " hid_gain=" << options.hid_move_gain
                   << " hid_max_step=" << options.hid_max_step
-                  << " hid_click=" << (options.hid_click_enabled ? 1 : 0) << '\n';
+                  << " hid_click=" << (options.hid_click_enabled ? 1 : 0)
+                  << " player_side=" << player_side_name(options.player_side) << '\n';
     } else {
         std::cout << "dry_run=1"
                   << " hid_gain=" << options.hid_move_gain
                   << " hid_max_step=" << options.hid_max_step
-                  << " hid_click=" << (options.hid_click_enabled ? 1 : 0) << '\n';
+                  << " hid_click=" << (options.hid_click_enabled ? 1 : 0)
+                  << " player_side=" << player_side_name(options.player_side) << '\n';
     }
 
     TrackManager track_manager;
@@ -205,7 +210,8 @@ void run(const Options& options) {
         }
 
         const auto detection_result = detector->detect(frame, options.confidence, options.nms_threshold);
-        const auto tracks = track_manager.update(detection_result.detections, frame.size());
+        const auto enemy_detections = filter_enemy_detections(detection_result.detections, options.player_side);
+        const auto tracks = track_manager.update(enemy_detections, frame.size());
         const auto selected = selector.select(tracks, frame.size(), analysis_state.active_track_id());
 
         const auto now = std::chrono::steady_clock::now();
@@ -221,7 +227,7 @@ void run(const Options& options) {
             capture.get(cv::CAP_PROP_POS_MSEC),
             fps,
             detection_result.timing,
-            static_cast<int>(detection_result.detections.size()),
+            static_cast<int>(enemy_detections.size()),
             std::nullopt,
         };
         if (selected.has_value()) {
@@ -247,7 +253,7 @@ void run(const Options& options) {
 
         if (options.preview) {
             cv::Mat display = frame.clone();
-            draw_overlay(display, detection_result.detections, report, detector->name());
+            draw_overlay(display, enemy_detections, report, detector->name());
             cv::imshow("CS2 Vision C++ Analyzer", display);
             const int key = cv::waitKey(1) & 0xFF;
             if (key == 27 || key == 'q' || key == 'Q') {
