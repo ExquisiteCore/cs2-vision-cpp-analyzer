@@ -14,8 +14,7 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
-#include "vision_analyzer/action_writer.hpp"
-#include "vision_analyzer/csv_writer.hpp"
+#include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/detector.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/tracking.hpp"
@@ -38,10 +37,6 @@ namespace {
             options.model_path = require_value(key);
         } else if (key == "--video") {
             options.video_path = require_value(key);
-        } else if (key == "--output") {
-            options.output_path = require_value(key);
-        } else if (key == "--actions-output") {
-            options.actions_output_path = require_value(key);
         } else if (key == "--hid-port") {
             options.hid_port = require_value(key);
         } else if (key == "--hid-gain") {
@@ -68,16 +63,21 @@ namespace {
             options.start_time_seconds = std::stod(require_value(key));
         } else if (key == "--preview") {
             options.preview = true;
+        } else if (key == "--dry-run") {
+            options.dry_run = true;
+        } else if (key == "--status-every") {
+            options.status_every_frames = std::stoi(require_value(key));
         } else if (key == "--help" || key == "-h") {
             std::cout
-                << "vision_analyzer --backend opencv-onnx --model best.onnx --video input.mp4 --output analysis.csv [--preview]\n"
+                << "vision_analyzer --backend opencv-onnx --model best.onnx --video input.mp4 (--hid-port COMx | --dry-run) [--preview]\n"
                 << "  --backend NAME    opencv-onnx, opencv-cuda, ort-cuda, ort-tensorrt, or tensorrt\n"
-                << "  --actions-output PATH write human-readable offline action suggestions to a txt file\n"
                 << "  --hid-port COMx   send relative mouse moves through the RP2350 HID bridge SDK\n"
                 << "  --hid-gain 1.0    multiply target offset before sending relative mouse movement\n"
                 << "  --hid-max-step N  clamp each relative mouse move axis to +/-N, default 120\n"
                 << "  --hid-click       send left click when fire_candidate is true\n"
                 << "  --hid-click-cooldown N  minimum frame cooldown between SDK left clicks, default 6\n"
+                << "  --dry-run         run detection and planning without SDK output\n"
+                << "  --status-every N  print one status line every N processed frames, default 30\n"
                 << "  --conf 0.25       confidence threshold\n"
                 << "  --nms 0.45        NMS threshold\n"
                 << "  --start-time S    seek to S seconds before analysis\n"
@@ -90,6 +90,15 @@ namespace {
         }
     }
     return options;
+}
+
+void validate_options(const Options& options) {
+    if (options.hid_port.empty() && !options.dry_run) {
+        throw std::runtime_error("use --hid-port COMx for live SDK output or --dry-run for tuning");
+    }
+    if (options.status_every_frames <= 0) {
+        throw std::runtime_error("--status-every must be greater than 0");
+    }
 }
 
 [[nodiscard]] cv::Scalar class_color(int class_id) {
@@ -158,26 +167,23 @@ void run(const Options& options) {
         std::cout << "warmup_frames=" << options.warmup_frames << '\n';
     }
 
-    CsvWriter writer(options.output_path);
-    writer.write_header();
-    std::unique_ptr<ActionWriter> action_writer;
-    if (!options.actions_output_path.empty()) {
-        action_writer = std::make_unique<ActionWriter>(options.actions_output_path);
-    }
+    AimController aim_controller(AimControllerOptions{
+        options.hid_move_gain,
+        options.hid_max_step,
+        options.hid_click_enabled,
+        options.hid_click_cooldown_frames,
+    });
     std::unique_ptr<HidClient> hid_client;
     std::unique_ptr<HidActionSender> hid_sender;
-    if (!options.hid_port.empty()) {
+    if (!options.dry_run) {
         hid_client = create_rp2350_hid_client(options.hid_port);
-        hid_sender = std::make_unique<HidActionSender>(
-            *hid_client,
-            HidActionOptions{
-                options.hid_move_gain,
-                options.hid_max_step,
-                options.hid_click_enabled,
-                options.hid_click_cooldown_frames,
-            }
-        );
+        hid_sender = std::make_unique<HidActionSender>(*hid_client);
         std::cout << "hid_port=" << options.hid_port
+                  << " hid_gain=" << options.hid_move_gain
+                  << " hid_max_step=" << options.hid_max_step
+                  << " hid_click=" << (options.hid_click_enabled ? 1 : 0) << '\n';
+    } else {
+        std::cout << "dry_run=1"
                   << " hid_gain=" << options.hid_move_gain
                   << " hid_max_step=" << options.hid_max_step
                   << " hid_click=" << (options.hid_click_enabled ? 1 : 0) << '\n';
@@ -223,12 +229,20 @@ void run(const Options& options) {
         } else {
             analysis_state.mark_no_target();
         }
-        writer.write_report(report);
-        if (action_writer) {
-            action_writer->write_report(report);
-        }
+
+        const AimCommand command = aim_controller.plan(report);
         if (hid_sender) {
-            hid_sender->handle_report(report);
+            hid_sender->execute(command);
+        }
+        if (processed_index % options.status_every_frames == 0) {
+            std::cout << "frame=" << report.frame_index
+                      << " det=" << report.detection_count
+                      << " target=" << (command.has_target ? 1 : 0)
+                      << " dx=" << command.dx
+                      << " dy=" << command.dy
+                      << " click=" << (command.click_left ? 1 : 0)
+                      << " lock=" << lock_state_name(command.lock_state)
+                      << '\n';
         }
 
         if (options.preview) {
@@ -244,7 +258,7 @@ void run(const Options& options) {
         ++processed_index;
     }
 
-    std::cout << "processed_frames=" << processed_index << " output=" << options.output_path << '\n';
+    std::cout << "processed_frames=" << processed_index << '\n';
     if (hid_sender) {
         hid_sender->stop_all();
     }
@@ -255,7 +269,9 @@ void run(const Options& options) {
 
 int main(int argc, char** argv) {
     try {
-        vision_analyzer::run(vision_analyzer::parse_args(argc, argv));
+        const auto options = vision_analyzer::parse_args(argc, argv);
+        vision_analyzer::validate_options(options);
+        vision_analyzer::run(options);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "error: " << error.what() << '\n';

@@ -29,13 +29,13 @@ enum class LockState {
 struct Options {
     std::string model_path = "../../runs/detect/train/weights/best.onnx";
     std::string video_path = "../../videos/02.mp4";
-    std::string output_path = "../../runs/analysis/analysis.csv";
-    std::string actions_output_path;
     std::string hid_port;
     float hid_move_gain = 1.0F;
     int hid_max_step = 120;
     bool hid_click_enabled = false;
     int hid_click_cooldown_frames = 6;
+    bool dry_run = false;
+    int status_every_frames = 30;
     Backend backend = Backend::OpenCvOnnx;
     float confidence = 0.25F;
     float nms_threshold = 0.45F;
