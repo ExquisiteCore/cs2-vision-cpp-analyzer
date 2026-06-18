@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "vision_analyzer/action_writer.hpp"
+#include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/postprocess.hpp"
 #include "vision_analyzer/tracking.hpp"
@@ -224,6 +225,96 @@ void test_action_writer_outputs_human_readable_move_and_click_candidate() {
     std::filesystem::remove(path);
 }
 
+void test_aim_controller_scales_and_clamps_target_offset() {
+    AimControllerOptions options;
+    options.move_gain = 0.5F;
+    options.max_step = 12;
+    options.click_enabled = false;
+    AimController controller(options);
+
+    FrameReport report{
+        42,
+        1400.0,
+        120.0,
+        InferenceTiming{1.0, 2.0, 3.0},
+        1,
+        TargetFrame{
+            9,
+            Detection{1, "ct_head", 0.91F, cv::Rect(950, 520, 40, 40)},
+            {970.0F, 540.0F},
+            {978.0F, 542.0F},
+            {30.0F, -10.0F},
+            31.62F,
+            false,
+            {976.0F, 541.0F},
+            {120.0F, 6.0F},
+            {10.0F, 1.0F},
+            0.82F,
+            2.24F,
+            LockState::Locked,
+            true,
+        },
+    };
+
+    const AimCommand command = controller.plan(report);
+
+    require(command.has_target, "aim command should mark target as present");
+    require(command.dx == 12, "aim command should clamp scaled x movement");
+    require(command.dy == -5, "aim command should scale y movement");
+    require(!command.click_left, "aim command should not click when clicks are disabled");
+}
+
+void test_aim_controller_holds_when_no_target() {
+    AimController controller;
+    FrameReport report{};
+
+    const AimCommand command = controller.plan(report);
+
+    require(!command.has_target, "aim command should hold when no target exists");
+    require(command.dx == 0, "aim command should not move x without target");
+    require(command.dy == 0, "aim command should not move y without target");
+    require(!command.click_left, "aim command should not click without target");
+}
+
+void test_aim_controller_respects_click_cooldown() {
+    AimControllerOptions options;
+    options.click_enabled = true;
+    options.click_cooldown_frames = 2;
+    AimController controller(options);
+
+    FrameReport report{
+        1,
+        33.0,
+        120.0,
+        InferenceTiming{},
+        1,
+        TargetFrame{
+            3,
+            Detection{1, "ct_head", 0.95F, cv::Rect(950, 520, 40, 40)},
+            {970.0F, 540.0F},
+            {960.0F, 540.0F},
+            {0.0F, 0.0F},
+            0.0F,
+            false,
+            {960.0F, 540.0F},
+            {0.0F, 0.0F},
+            {0.0F, 0.0F},
+            0.90F,
+            0.0F,
+            LockState::Locked,
+            true,
+        },
+    };
+
+    const AimCommand first = controller.plan(report);
+    const AimCommand second = controller.plan(report);
+    const AimCommand third = controller.plan(report);
+
+    require(first.click_left, "first fire candidate should click");
+    require(!second.click_left, "second frame should be blocked by cooldown");
+    require(!third.click_left, "third frame should still be blocked while cooldown counts down");
+}
+
 class RecordingHidClient final : public HidClient {
 public:
     void move_relative(std::int16_t dx, std::int16_t dy) override {
@@ -297,6 +388,9 @@ int main() {
         test_analysis_state_predicts_latency_in_frame_units();
         test_motion_filter_is_stable_and_moves_toward_measurement();
         test_action_writer_outputs_human_readable_move_and_click_candidate();
+        test_aim_controller_scales_and_clamps_target_offset();
+        test_aim_controller_holds_when_no_target();
+        test_aim_controller_respects_click_cooldown();
         test_hid_action_sender_maps_target_offset_to_mouse_move_and_click();
         std::cout << "algorithm tests passed\n";
         return 0;

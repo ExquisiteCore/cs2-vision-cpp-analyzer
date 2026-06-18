@@ -38,7 +38,7 @@ target("vision_analyzer_tests")
     set_kind("binary")
     add_includedirs("include")
     add_files("tests/test_algorithms.cpp")
-    add_files("src/types.cpp", "src/postprocess.cpp", "src/tracking.cpp", "src/action_writer.cpp", "src/hid_output.cpp")
+    add_files("src/types.cpp", "src/postprocess.cpp", "src/tracking.cpp", "src/action_writer.cpp", "src/hid_output.cpp", "src/aim_controller.cpp")
     add_packages("opencv")
     if is_plat("windows") then
         add_cxflags("/utf-8")
