@@ -1,0 +1,45 @@
+add_rules("mode.debug", "mode.release")
+
+set_project("cs2_vision_cpp_analyzer")
+set_languages("c++17")
+
+add_requires("opencv 4.x", {configs = {dnn = true, ffmpeg = false}})
+
+local ort_root = os.getenv("ONNXRUNTIME_ROOT") or "D:/Tool/onnxruntime-win-x64-gpu-1.22.1"
+local torch_lib = path.join(os.projectdir(), "../../.venv/Lib/site-packages/torch/lib")
+local tensorrt_libs = path.join(os.projectdir(), "../../.venv/Lib/site-packages/tensorrt_libs")
+local hid_sdk_root = os.getenv("RP2350_HID_BRIDGE_SDK") or "D:/project/pi/test/sdk/cpp"
+local hid_sdk_include = path.join(hid_sdk_root, "include")
+
+target("vision_analyzer")
+    set_kind("binary")
+    add_includedirs("include")
+    add_includedirs(path.join(ort_root, "include"))
+    if os.isdir(hid_sdk_include) then
+        add_includedirs(hid_sdk_include)
+        add_defines("VISION_ANALYZER_WITH_RP2350_HID")
+    end
+    add_files("src/*.cpp")
+    add_packages("opencv")
+    add_defines("VISION_ANALYZER_WITH_ORT")
+    add_linkdirs(path.join(ort_root, "lib"))
+    add_links("onnxruntime")
+    add_runenvs("PATH", path.join(ort_root, "lib"))
+    add_runenvs("PATH", torch_lib)
+    add_runenvs("PATH", tensorrt_libs)
+    after_build(function (target)
+        os.cp(path.join(ort_root, "lib", "*.dll"), target:targetdir())
+    end)
+    if is_plat("windows") then
+        add_cxflags("/utf-8")
+    end
+
+target("vision_analyzer_tests")
+    set_kind("binary")
+    add_includedirs("include")
+    add_files("tests/test_algorithms.cpp")
+    add_files("src/types.cpp", "src/postprocess.cpp", "src/tracking.cpp", "src/action_writer.cpp", "src/hid_output.cpp")
+    add_packages("opencv")
+    if is_plat("windows") then
+        add_cxflags("/utf-8")
+    end
