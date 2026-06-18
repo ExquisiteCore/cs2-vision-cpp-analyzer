@@ -334,46 +334,22 @@ public:
     bool stopped = false;
 };
 
-void test_hid_action_sender_maps_target_offset_to_mouse_move_and_click() {
+void test_hid_action_sender_executes_aim_command() {
     RecordingHidClient client;
-    HidActionOptions options;
-    options.move_gain = 0.5F;
-    options.max_step = 12;
-    options.click_enabled = true;
-    options.click_cooldown_frames = 2;
-    HidActionSender sender(client, options);
+    HidActionSender sender(client);
 
-    FrameReport report{
-        42,
-        1400.0,
-        120.0,
-        InferenceTiming{1.0, 2.0, 3.0},
-        1,
-        TargetFrame{
-            9,
-            Detection{1, "ct_head", 0.91F, cv::Rect(950, 520, 40, 40)},
-            {970.0F, 540.0F},
-            {978.0F, 542.0F},
-            {30.0F, -10.0F},
-            31.62F,
-            false,
-            {976.0F, 541.0F},
-            {120.0F, 6.0F},
-            {10.0F, 1.0F},
-            0.82F,
-            2.24F,
-            LockState::Locked,
-            true,
-        },
-    };
+    sender.execute(AimCommand{
+        true,
+        12,
+        -5,
+        true,
+        LockState::Locked,
+    });
 
-    sender.handle_report(report);
-    sender.handle_report(report);
-
-    require(client.moves.size() == 2, "HID sender should emit one relative move per target frame");
-    require(client.moves[0].first == 12, "HID sender should apply gain and clamp x movement");
-    require(client.moves[0].second == -5, "HID sender should apply gain to y movement");
-    require(client.left_clicks == 1, "HID sender should respect click cooldown");
+    require(client.moves.size() == 1, "HID sender should emit one relative move");
+    require(client.moves[0].first == 12, "HID sender should forward x movement");
+    require(client.moves[0].second == -5, "HID sender should forward y movement");
+    require(client.left_clicks == 1, "HID sender should forward click command");
 }
 
 }  // namespace
@@ -391,7 +367,7 @@ int main() {
         test_aim_controller_scales_and_clamps_target_offset();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
-        test_hid_action_sender_maps_target_offset_to_mouse_move_and_click();
+        test_hid_action_sender_executes_aim_command();
         std::cout << "algorithm tests passed\n";
         return 0;
     } catch (const std::exception& error) {

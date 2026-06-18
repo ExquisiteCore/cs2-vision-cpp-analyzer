@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-#include "vision_analyzer/types.hpp"
+#include "vision_analyzer/aim_controller.hpp"
 
 namespace vision_analyzer {
 
@@ -17,24 +17,15 @@ public:
     virtual void stop_all() = 0;
 };
 
-struct HidActionOptions {
-    float move_gain = 1.0F;
-    int max_step = 120;
-    bool click_enabled = false;
-    int click_cooldown_frames = 6;
-};
-
 class HidActionSender {
 public:
-    explicit HidActionSender(HidClient& client, HidActionOptions options = {});
+    explicit HidActionSender(HidClient& client);
 
-    void handle_report(const FrameReport& report);
+    void execute(const AimCommand& command);
     void stop_all();
 
 private:
     HidClient& client_;
-    HidActionOptions options_;
-    int click_cooldown_remaining_ = 0;
 };
 
 [[nodiscard]] std::unique_ptr<HidClient> create_rp2350_hid_client(const std::string& port);
