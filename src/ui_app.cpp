@@ -248,7 +248,7 @@ void clearProcessHandle() {
 
 void runProcess(std::string command) {
     if (processRunning.exchange(true)) {
-        appendLog("runner: process already running");
+        appendLog("运行器：已有进程在执行");
         return;
     }
 
@@ -261,7 +261,7 @@ void runProcess(std::string command) {
         HANDLE readPipe = nullptr;
         HANDLE writePipe = nullptr;
         if (!CreatePipe(&readPipe, &writePipe, &security, 0)) {
-            appendLog("runner: CreatePipe failed");
+            appendLog("运行器：创建输出管道失败");
             processRunning = false;
             return;
         }
@@ -293,7 +293,7 @@ void runProcess(std::string command) {
         CloseHandle(writePipe);
 
         if (!ok) {
-            appendLog("runner: CreateProcess failed, check analyzer path");
+            appendLog("运行器：启动进程失败，请检查分析器程序路径");
             CloseHandle(readPipe);
             processRunning = false;
             return;
@@ -327,7 +327,7 @@ void runProcess(std::string command) {
         WaitForSingleObject(process.hProcess, INFINITE);
         DWORD exitCode = 0;
         GetExitCodeProcess(process.hProcess, &exitCode);
-        appendLog("runner: exited with code " + std::to_string(exitCode));
+        appendLog("运行器：进程退出，代码 " + std::to_string(exitCode));
 
         clearProcessHandle();
         CloseHandle(process.hThread);
@@ -341,17 +341,17 @@ void stopProcess() {
     std::lock_guard<std::mutex> lock(processMutex);
     if (processHandle != nullptr) {
         TerminateProcess(processHandle, 130);
-        appendLog("runner: terminate requested");
+        appendLog("运行器：已请求停止当前进程");
     }
 }
 #else
 void runProcess(std::string command) {
-    appendLog("runner: process launch is implemented for Windows only");
+    appendLog("运行器：进程启动目前只支持 Windows");
     appendLog("> " + command);
 }
 
 void stopProcess() {
-    appendLog("runner: stop is implemented for Windows only");
+    appendLog("运行器：停止进程目前只支持 Windows");
 }
 #endif
 
@@ -398,16 +398,16 @@ void field(eui::Ui& ui,
            std::string& value,
            const std::string& placeholder = {}) {
     std::string* target = &value;
-    label(ui, id + ".label", x, y, width, 18.0f, name, 11.0f, kMuted);
+    label(ui, id + ".label", x, y, width, 16.0f, name, 10.5f, kMuted);
     ui.stack(id + ".wrap")
         .x(x)
-        .y(y + 20.0f)
-        .size(width, 32.0f)
+        .y(y + 18.0f)
+        .size(width, 30.0f)
         .content([&] {
             components::input(ui, id)
                 .theme(themeTokens())
-                .size(width, 32.0f)
-                .fontSize(12.0f)
+                .size(width, 30.0f)
+                .fontSize(11.5f)
                 .placeholder(placeholder)
                 .value(value)
                 .onChange([target](const std::string& next) {
@@ -506,8 +506,8 @@ void segmented(eui::Ui& ui,
 }
 
 void composeHeader(eui::Ui& ui, float x, float y, float width) {
-    label(ui, "header.title", x, y, 360.0f, 38.0f, "CS2 Vision Runtime", 24.0f, kText);
-    label(ui, "header.sub", x, y + 32.0f, 520.0f, 22.0f, "EUI launcher for DXGI input, model runtime, HID bridge, and calibration.", 12.0f, kMuted);
+    label(ui, "header.title", x, y, 420.0f, 38.0f, "CS2 视觉运行控制台", 24.0f, kText);
+    label(ui, "header.sub", x, y + 32.0f, 620.0f, 22.0f, "统一管理模型、DXGI 输入、HID 标定、干跑预览和实机运行。", 12.0f, kMuted);
 
     const bool running = processRunning.load();
     ui.rect("header.status.bg")
@@ -518,12 +518,12 @@ void composeHeader(eui::Ui& ui, float x, float y, float width) {
         .radius(8.0f)
         .border(1.0f, running ? alpha(kAmber, 0.42f) : alpha(kAccent, 0.42f))
         .build();
-    label(ui, "header.status", x + width - 156.0f, y + 8.0f, 156.0f, 34.0f, running ? "Process running" : "Idle", 13.0f, running ? kAmber : kAccent, eui::HorizontalAlign::Center);
+    label(ui, "header.status", x + width - 156.0f, y + 8.0f, 156.0f, 34.0f, running ? "运行中" : "空闲", 13.0f, running ? kAmber : kAccent, eui::HorizontalAlign::Center);
 }
 
 void composeConfig(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "config.panel", x, y, width, height);
-    label(ui, "config.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "Runtime Configuration", 15.0f, kText);
+    label(ui, "config.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "模型与输入", 15.0f, kText);
 
     const float pad = 14.0f;
     const float gap = 12.0f;
@@ -532,37 +532,35 @@ void composeConfig(eui::Ui& ui, float x, float y, float width, float height) {
     const float right = left + fieldW + gap;
     float rowY = y + 46.0f;
 
-    field(ui, "cfg.exe", left, rowY, width - pad * 2.0f, "Analyzer executable", state.analyzerExe);
-    rowY += 60.0f;
-    field(ui, "cfg.config", left, rowY, width - pad * 2.0f, "Runtime config", state.configPath);
-    rowY += 60.0f;
-    field(ui, "cfg.model", left, rowY, width - pad * 2.0f, "Model", state.modelPath);
-    rowY += 60.0f;
-    field(ui, "cfg.schema", left, rowY, width - pad * 2.0f, "Schema override", state.schemaPath, "optional");
-    rowY += 60.0f;
+    field(ui, "cfg.exe", left, rowY, width - pad * 2.0f, "分析器程序", state.analyzerExe);
+    rowY += 54.0f;
+    field(ui, "cfg.config", left, rowY, width - pad * 2.0f, "运行配置", state.configPath);
+    rowY += 54.0f;
+    field(ui, "cfg.model", left, rowY, width - pad * 2.0f, "ONNX 模型", state.modelPath);
+    rowY += 54.0f;
+    field(ui, "cfg.schema", left, rowY, width - pad * 2.0f, "Schema 文件", state.schemaPath, "可留空，默认读取模型旁边的 schema");
+    rowY += 54.0f;
 
-    label(ui, "cfg.backend.label", left, rowY, fieldW, 18.0f, "Backend", 11.0f, kMuted);
-    segmented(ui, "cfg.backend", left, rowY + 20.0f, fieldW, {"onnx", "cuda", "ort", "trt"}, state.backend);
-    label(ui, "cfg.input.label", right, rowY, fieldW, 18.0f, "Input", 11.0f, kMuted);
-    segmented(ui, "cfg.input", right, rowY + 20.0f, fieldW, {"dxgi", "video"}, state.input);
-    rowY += 62.0f;
+    label(ui, "cfg.backend.label", left, rowY, fieldW, 18.0f, "推理后端", 11.0f, kMuted);
+    segmented(ui, "cfg.backend", left, rowY + 20.0f, fieldW, {"ONNX", "CUDA", "ORT", "TRT"}, state.backend);
+    label(ui, "cfg.input.label", right, rowY, fieldW, 18.0f, "输入源", 11.0f, kMuted);
+    segmented(ui, "cfg.input", right, rowY + 20.0f, fieldW, {"DXGI", "视频"}, state.input);
+    rowY += 56.0f;
 
-    label(ui, "cfg.side.label", left, rowY, fieldW, 18.0f, "Player side", 11.0f, kMuted);
-    segmented(ui, "cfg.side", left, rowY + 20.0f, fieldW, {"ct", "t", "unknown"}, state.side);
-    field(ui, "cfg.video", right, rowY, fieldW, "Video path", state.videoPath);
-    rowY += 62.0f;
+    label(ui, "cfg.side.label", left, rowY, fieldW, 18.0f, "我方阵营", 11.0f, kMuted);
+    segmented(ui, "cfg.side", left, rowY + 20.0f, fieldW, {"我是 CT", "我是 T", "未知"}, state.side);
+    field(ui, "cfg.video", right, rowY, fieldW, "视频文件", state.videoPath);
+    rowY += 56.0f;
 
-    field(ui, "cfg.dxgi.adapter", left, rowY, fieldW, "DXGI adapter", state.dxgiAdapter);
-    field(ui, "cfg.dxgi.output", right, rowY, fieldW, "DXGI output", state.dxgiOutput);
-    rowY += 62.0f;
+    field(ui, "cfg.dxgi.adapter", left, rowY, fieldW, "DXGI 适配器", state.dxgiAdapter);
+    field(ui, "cfg.dxgi.output", right, rowY, fieldW, "显示输出", state.dxgiOutput);
 
-    field(ui, "cfg.hid.port", left, rowY, fieldW, "HID port", state.hidPort);
-    field(ui, "cfg.action.log", right, rowY, fieldW, "Action log", state.actionLog);
+    label(ui, "cfg.note", left, y + height - 30.0f, width - pad * 2.0f, 18.0f, "实机运行会强制校验 Schema；视频或 DXGI 干跑可先不接 HID。", 11.0f, kMuted);
 }
 
 void composeTuning(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "tuning.panel", x, y, width, height);
-    label(ui, "tuning.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "Movement and Calibration", 15.0f, kText);
+    label(ui, "tuning.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "HID 与调参", 15.0f, kText);
 
     const float pad = 14.0f;
     const float gap = 10.0f;
@@ -572,33 +570,37 @@ void composeTuning(eui::Ui& ui, float x, float y, float width, float height) {
     const float x2 = x1 + fieldW + gap;
     float rowY = y + 46.0f;
 
-    field(ui, "tune.gain", x0, rowY, fieldW, "HID gain", state.hidGain);
-    field(ui, "tune.step", x1, rowY, fieldW, "Max step", state.hidMaxStep);
-    field(ui, "tune.deadzone", x2, rowY, fieldW, "Deadzone px", state.hidDeadzone);
-    rowY += 62.0f;
+    field(ui, "tune.port", x0, rowY, fieldW, "HID 端口", state.hidPort);
+    field(ui, "tune.action.log", x1, rowY, fieldW * 2.0f + gap, "动作日志", state.actionLog);
+    rowY += 54.0f;
 
-    field(ui, "tune.conf", x0, rowY, fieldW, "Confidence", state.confidence);
-    field(ui, "tune.nms", x1, rowY, fieldW, "NMS", state.nms);
-    field(ui, "tune.calstep", x2, rowY, fieldW, "Cal step", state.calibrationStep);
-    rowY += 62.0f;
+    field(ui, "tune.gain", x0, rowY, fieldW, "HID 增益", state.hidGain);
+    field(ui, "tune.step", x1, rowY, fieldW, "单帧限幅", state.hidMaxStep);
+    field(ui, "tune.deadzone", x2, rowY, fieldW, "死区像素", state.hidDeadzone);
+    rowY += 54.0f;
 
-    field(ui, "tune.noise", x0, rowY, fieldW, "Noise samples", state.calibrationNoiseSamples);
-    field(ui, "tune.probedx", x1, rowY, fieldW, "Probe dx", state.testMoveDx);
-    field(ui, "tune.probedy", x2, rowY, fieldW, "Probe dy", state.testMoveDy);
-    rowY += 64.0f;
+    field(ui, "tune.conf", x0, rowY, fieldW, "置信度", state.confidence);
+    field(ui, "tune.nms", x1, rowY, fieldW, "NMS 阈值", state.nms);
+    field(ui, "tune.calstep", x2, rowY, fieldW, "标定步长", state.calibrationStep);
+    rowY += 54.0f;
 
-    field(ui, "tune.calout", x0, rowY, width - pad * 2.0f, "Calibration sample output", state.calibrationOutput);
-    rowY += 60.0f;
-    field(ui, "tune.calconfig", x0, rowY, width - pad * 2.0f, "Tuned config output", state.calibrationConfig);
-    rowY += 62.0f;
+    field(ui, "tune.noise", x0, rowY, fieldW, "噪声样本", state.calibrationNoiseSamples);
+    field(ui, "tune.probedx", x1, rowY, fieldW, "探针 dx", state.testMoveDx);
+    field(ui, "tune.probedy", x2, rowY, fieldW, "探针 dy", state.testMoveDy);
+    rowY += 54.0f;
 
-    toggle(ui, "tune.preview", x0, rowY, 140.0f, "Preview", state.preview);
-    toggle(ui, "tune.click", x0 + 150.0f, rowY, 150.0f, "Left click", state.hidClick);
+    field(ui, "tune.calout", x0, rowY, width - pad * 2.0f, "标定样本输出", state.calibrationOutput);
+    rowY += 54.0f;
+    field(ui, "tune.calconfig", x0, rowY, width - pad * 2.0f, "调参配置输出", state.calibrationConfig);
+    rowY += 56.0f;
+
+    toggle(ui, "tune.preview", x0, rowY, 136.0f, "预览窗口", state.preview);
+    toggle(ui, "tune.click", x0 + 148.0f, rowY, 150.0f, "允许开火", state.hidClick);
 }
 
 void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "actions.panel", x, y, width, height);
-    label(ui, "actions.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "Run Controls", 15.0f, kText);
+    label(ui, "actions.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "运行控制", 15.0f, kText);
     const bool running = processRunning.load();
     const float pad = 14.0f;
     const float gap = 10.0f;
@@ -609,18 +611,18 @@ void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
     const float row0 = y + 46.0f;
     const float row1 = row0 + 44.0f;
 
-    button(ui, "act.verify", x0, row0, buttonW, "Verify Input", 0xF06E, kBlue, [] { runProcess(buildVerifyCommand()); }, running);
-    button(ui, "act.probe", x1, row0, buttonW, "HID Probe", 0xF11C, kAmber, [] { runProcess(buildHidProbeCommand()); }, running);
-    button(ui, "act.calibrate", x2, row0, buttonW, "Calibrate", 0xF1EC, kAccent, [] { runProcess(buildCalibrationCommand()); }, running);
+    button(ui, "act.verify", x0, row0, buttonW, "验证输入", 0xF06E, kBlue, [] { runProcess(buildVerifyCommand()); }, running);
+    button(ui, "act.probe", x1, row0, buttonW, "HID 探针", 0xF11C, kAmber, [] { runProcess(buildHidProbeCommand()); }, running);
+    button(ui, "act.calibrate", x2, row0, buttonW, "执行标定", 0xF1EC, kAccent, [] { runProcess(buildCalibrationCommand()); }, running);
 
-    button(ui, "act.dry", x0, row1, buttonW, "Dry Run", 0xF04B, kBlue, [] { runProcess(buildDryRunCommand()); }, running);
-    button(ui, "act.live", x1, row1, buttonW, "Start Live", 0xF05B, kAccent, [] { runProcess(buildLiveCommand()); }, running);
-    button(ui, "act.stop", x2, row1, buttonW, "Stop", 0xF04D, kRose, [] { stopProcess(); }, !running);
+    button(ui, "act.dry", x0, row1, buttonW, "干跑预览", 0xF04B, kBlue, [] { runProcess(buildDryRunCommand()); }, running);
+    button(ui, "act.live", x1, row1, buttonW, "启动实机", 0xF05B, kAccent, [] { runProcess(buildLiveCommand()); }, running);
+    button(ui, "act.stop", x2, row1, buttonW, "停止", 0xF04D, kRose, [] { stopProcess(); }, !running);
 }
 
 void composeLog(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "log.panel", x, y, width, height);
-    label(ui, "log.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "Process Output", 15.0f, kText);
+    label(ui, "log.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "输出日志", 15.0f, kText);
 
     const auto lines = snapshotLog();
     const int maxLines = std::max(1, static_cast<int>((height - 52.0f) / 18.0f));
@@ -641,10 +643,12 @@ void composeLog(eui::Ui& ui, float x, float y, float width, float height) {
 
 const DslAppConfig& dslAppConfig() {
     static const DslAppConfig config = DslAppConfig{}
-        .title("CS2 Vision Runtime")
+        .title("CS2 视觉运行控制台")
         .pageId("cs2_vision_runtime")
         .windowSize(1180, 760)
         .background(kBg)
+        .textFont("assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf")
+        .iconFont("assets/Font Awesome 7 Free-Solid-900.otf")
         .fps(60.0)
         .showDebugStatsInTitle(false);
     return config;
@@ -659,19 +663,27 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         .build();
 
     const float margin = 22.0f;
-    const float width = std::max(980.0f, screen.width - margin * 2.0f);
-    const float height = std::max(680.0f, screen.height - margin * 2.0f);
+    const float width = std::max(1040.0f, screen.width - margin * 2.0f);
+    const float height = std::max(700.0f, screen.height - margin * 2.0f);
     const float x = (screen.width - width) * 0.5f;
     const float y = margin;
     const float gap = 14.0f;
-    const float leftW = std::clamp(width * 0.56f, 540.0f, 700.0f);
+    const float contentY = y + 72.0f;
+    const float contentH = height - 72.0f;
+    const float leftW = std::clamp(width * 0.60f, 620.0f, 740.0f);
     const float rightW = width - leftW - gap;
+    const float configH = std::clamp(contentH * 0.67f, 430.0f, 450.0f);
+    const float logY = contentY + configH + gap;
+    const float logH = std::max(160.0f, contentY + contentH - logY);
+    const float tuningH = std::clamp(contentH * 0.67f, 430.0f, 460.0f);
+    const float actionsY = contentY + tuningH + gap;
+    const float actionsH = std::max(150.0f, contentY + contentH - actionsY);
 
     composeHeader(ui, x, y, width);
-    composeConfig(ui, x, y + 70.0f, leftW, height - 70.0f);
-    composeTuning(ui, x + leftW + gap, y + 70.0f, rightW, 344.0f);
-    composeActions(ui, x + leftW + gap, y + 428.0f, rightW, 142.0f);
-    composeLog(ui, x + leftW + gap, y + 584.0f, rightW, height - 584.0f);
+    composeConfig(ui, x, contentY, leftW, configH);
+    composeLog(ui, x, logY, leftW, logH);
+    composeTuning(ui, x + leftW + gap, contentY, rightW, tuningH);
+    composeActions(ui, x + leftW + gap, actionsY, rightW, actionsH);
 }
 
 }  // namespace app

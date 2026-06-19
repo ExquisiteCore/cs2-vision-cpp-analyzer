@@ -17,7 +17,7 @@ xmake
 xmake run vision_analyzer_tests
 ```
 
-Optional EUI desktop launcher:
+可选的 EUI 桌面控制台：
 
 ```powershell
 cd tools\cpp_analyzer
@@ -26,10 +26,10 @@ cmake --build build-ui --config Release --target vision_analyzer_ui
 .\build-ui\Release\vision_analyzer_ui.exe
 ```
 
-The UI is a launcher for the existing `vision_analyzer.exe`: it edits runtime
-paths and tuning values, runs DXGI input verification, HID movement probe,
-calibration, dry-run preview, and live HID mode, then streams the child process
-output into the log panel. The analyzer binary is still built by `xmake`.
+这个 UI 是现有 `vision_analyzer.exe` 的启动控制台：可以编辑模型路径、
+DXGI/HID 参数和调参值，执行输入验证、HID 探针、标定、干跑预览和实机
+运行，并把子进程输出流式显示在日志面板里。底层分析器二进制仍然由
+`xmake` 构建。
 
 The RP2350 HID bridge SDK is optional at build time. Provide it with
 `xmake f --hid_sdk_root=...` or the `RP2350_HID_BRIDGE_SDK` environment
