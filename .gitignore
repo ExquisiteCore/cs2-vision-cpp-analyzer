@@ -1,3 +1,6 @@
 .xmake/
 build/
 build-ui/
+actions.txt
+hid-calibration.txt
+hid-tuned.cfg

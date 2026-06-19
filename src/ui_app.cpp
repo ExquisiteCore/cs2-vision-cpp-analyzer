@@ -24,17 +24,19 @@ namespace {
 
 constexpr const char* kProjectRoot = VISION_ANALYZER_CPP_ROOT;
 
-constexpr eui::Color kBg{0.075f, 0.082f, 0.090f, 1.0f};
-constexpr eui::Color kPanel{0.118f, 0.130f, 0.143f, 1.0f};
-constexpr eui::Color kPanel2{0.145f, 0.158f, 0.172f, 1.0f};
-constexpr eui::Color kField{0.085f, 0.095f, 0.107f, 1.0f};
-constexpr eui::Color kBorder{0.255f, 0.300f, 0.335f, 0.92f};
-constexpr eui::Color kText{0.930f, 0.950f, 0.960f, 1.0f};
-constexpr eui::Color kMuted{0.570f, 0.620f, 0.650f, 1.0f};
-constexpr eui::Color kAccent{0.075f, 0.560f, 0.480f, 1.0f};
-constexpr eui::Color kBlue{0.220f, 0.430f, 0.840f, 1.0f};
-constexpr eui::Color kAmber{0.890f, 0.580f, 0.180f, 1.0f};
-constexpr eui::Color kRose{0.820f, 0.260f, 0.360f, 1.0f};
+constexpr eui::Color kBg{0.030f, 0.038f, 0.047f, 1.0f};
+constexpr eui::Color kPanel{0.070f, 0.084f, 0.098f, 1.0f};
+constexpr eui::Color kPanel2{0.095f, 0.113f, 0.132f, 1.0f};
+constexpr eui::Color kField{0.045f, 0.055f, 0.067f, 1.0f};
+constexpr eui::Color kFieldHover{0.118f, 0.140f, 0.160f, 1.0f};
+constexpr eui::Color kBorder{0.205f, 0.255f, 0.295f, 0.92f};
+constexpr eui::Color kText{0.930f, 0.955f, 0.970f, 1.0f};
+constexpr eui::Color kMuted{0.590f, 0.650f, 0.690f, 1.0f};
+constexpr eui::Color kDim{0.390f, 0.455f, 0.500f, 1.0f};
+constexpr eui::Color kAccent{0.075f, 0.630f, 0.540f, 1.0f};
+constexpr eui::Color kBlue{0.250f, 0.455f, 0.870f, 1.0f};
+constexpr eui::Color kAmber{0.920f, 0.580f, 0.200f, 1.0f};
+constexpr eui::Color kRose{0.850f, 0.255f, 0.360f, 1.0f};
 constexpr eui::Color kClear{0.0f, 0.0f, 0.0f, 0.0f};
 
 struct UiState {
@@ -97,7 +99,7 @@ void initializeState() {
 }
 
 components::theme::ThemeColorTokens themeTokens() {
-    return {kBg, kAccent, kPanel2, {0.180f, 0.205f, 0.220f, 1.0f}, {0.100f, 0.120f, 0.135f, 1.0f}, kText, kBorder, true};
+    return {kBg, kAccent, kPanel2, kFieldHover, kField, kText, kBorder, true};
 }
 
 eui::Transition transition() {
@@ -370,6 +372,7 @@ void label(eui::Ui& ui,
         .y(y)
         .size(width, height)
         .text(text)
+        .fontFamily("Microsoft YaHei")
         .fontSize(fontSize)
         .lineHeight(fontSize + 5.0f)
         .color(color)
@@ -384,9 +387,65 @@ void panel(eui::Ui& ui, const std::string& id, float x, float y, float width, fl
         .y(y)
         .size(width, height)
         .color(kPanel)
-        .radius(8.0f)
-        .border(1.0f, alpha(kBorder, 0.78f))
+        .radius(10.0f)
+        .border(1.0f, alpha(kBorder, 0.70f))
+        .shadow(18.0f, 0.0f, 10.0f, alpha({0.0f, 0.0f, 0.0f, 1.0f}, 0.10f))
         .build();
+    ui.rect(id + ".top")
+        .x(x + 1.0f)
+        .y(y + 1.0f)
+        .size(width - 2.0f, 1.0f)
+        .color(alpha(kText, 0.055f))
+        .build();
+}
+
+void sectionTitle(eui::Ui& ui, const std::string& id, float x, float y, float width, const std::string& title, const std::string& meta = {}) {
+    label(ui, id + ".title", x, y, width, 24.0f, title, 15.0f, kText);
+    if (!meta.empty()) {
+        label(ui, id + ".meta", x, y + 22.0f, width, 18.0f, meta, 10.5f, kDim);
+    }
+}
+
+void badge(eui::Ui& ui, const std::string& id, float x, float y, float width, const std::string& text, eui::Color color) {
+    ui.rect(id + ".bg")
+        .x(x)
+        .y(y)
+        .size(width, 32.0f)
+        .color(alpha(color, 0.12f))
+        .radius(8.0f)
+        .border(1.0f, alpha(color, 0.34f))
+        .build();
+    label(ui, id + ".text", x, y, width, 32.0f, text, 12.0f, color, eui::HorizontalAlign::Center);
+}
+
+void stepCard(eui::Ui& ui,
+              const std::string& id,
+              float x,
+              float y,
+              float width,
+              const std::string& number,
+              const std::string& title,
+              const std::string& detail,
+              eui::Color color) {
+    ui.rect(id + ".bg")
+        .x(x)
+        .y(y)
+        .size(width, 60.0f)
+        .color(kPanel2)
+        .radius(9.0f)
+        .border(1.0f, alpha(color, 0.26f))
+        .build();
+    ui.rect(id + ".num.bg")
+        .x(x + 12.0f)
+        .y(y + 13.0f)
+        .size(28.0f, 28.0f)
+        .color(alpha(color, 0.16f))
+        .radius(8.0f)
+        .border(1.0f, alpha(color, 0.36f))
+        .build();
+    label(ui, id + ".num", x + 12.0f, y + 13.0f, 28.0f, 28.0f, number, 13.0f, color, eui::HorizontalAlign::Center);
+    label(ui, id + ".title", x + 50.0f, y + 10.0f, width - 60.0f, 22.0f, title, 13.0f, kText);
+    label(ui, id + ".detail", x + 50.0f, y + 32.0f, width - 60.0f, 18.0f, detail, 10.5f, kMuted);
 }
 
 void field(eui::Ui& ui,
@@ -398,16 +457,16 @@ void field(eui::Ui& ui,
            std::string& value,
            const std::string& placeholder = {}) {
     std::string* target = &value;
-    label(ui, id + ".label", x, y, width, 16.0f, name, 10.5f, kMuted);
+    label(ui, id + ".label", x, y, width, 15.0f, name, 10.2f, kMuted);
     ui.stack(id + ".wrap")
         .x(x)
-        .y(y + 18.0f)
-        .size(width, 30.0f)
+        .y(y + 16.0f)
+        .size(width, 28.0f)
         .content([&] {
             components::input(ui, id)
                 .theme(themeTokens())
-                .size(width, 30.0f)
-                .fontSize(11.5f)
+                .size(width, 28.0f)
+                .fontSize(11.0f)
                 .placeholder(placeholder)
                 .value(value)
                 .onChange([target](const std::string& next) {
@@ -423,29 +482,37 @@ void button(eui::Ui& ui,
             float x,
             float y,
             float width,
+            float height,
             const std::string& text,
             unsigned int icon,
             eui::Color color,
             std::function<void()> onClick,
-            bool disabled = false) {
-    const eui::Color hover = eui::mixColor(color, {1.0f, 1.0f, 1.0f, 1.0f}, 0.12f);
-    const eui::Color pressed = eui::mixColor(color, {0.0f, 0.0f, 0.0f, 1.0f}, 0.12f);
+            bool disabled = false,
+            bool primary = false) {
+    const eui::Color normal = primary ? color : alpha(color, 0.16f);
+    const eui::Color hover = primary
+        ? eui::mixColor(color, {1.0f, 1.0f, 1.0f, 1.0f}, 0.12f)
+        : alpha(eui::mixColor(color, {1.0f, 1.0f, 1.0f, 1.0f}, 0.10f), 0.24f);
+    const eui::Color pressed = primary
+        ? eui::mixColor(color, {0.0f, 0.0f, 0.0f, 1.0f}, 0.12f)
+        : alpha(color, 0.28f);
+    const eui::Color textColor = primary ? kText : eui::mixColor(color, kText, 0.50f);
     ui.stack(id + ".wrap")
         .x(x)
         .y(y)
-        .size(width, 34.0f)
+        .size(width, height)
         .content([&] {
             components::button(ui, id)
-                .size(width, 34.0f)
+                .size(width, height)
                 .icon(icon)
-                .iconSize(13.0f)
-                .fontSize(12.0f)
+                .iconSize(primary ? 14.0f : 13.0f)
+                .fontSize(primary ? 13.0f : 12.0f)
                 .text(text)
-                .colors(color, hover, pressed)
-                .textColor(kText)
-                .iconColor(kText)
+                .colors(normal, hover, pressed)
+                .textColor(textColor)
+                .iconColor(textColor)
                 .radius(8.0f)
-                .border(1.0f, alpha(color, 0.65f))
+                .border(1.0f, primary ? alpha(color, 0.70f) : alpha(color, 0.38f))
                 .shadow(0.0f, 0.0f, 0.0f, kClear)
                 .transition(transition())
                 .disabled(disabled)
@@ -453,6 +520,20 @@ void button(eui::Ui& ui,
                 .build();
         })
         .build();
+}
+
+void button(eui::Ui& ui,
+            const std::string& id,
+            float x,
+            float y,
+            float width,
+            const std::string& text,
+            unsigned int icon,
+            eui::Color color,
+            std::function<void()> onClick,
+            bool disabled = false,
+            bool primary = false) {
+    button(ui, id, x, y, width, 34.0f, text, icon, color, std::move(onClick), disabled, primary);
 }
 
 void toggle(eui::Ui& ui, const std::string& id, float x, float y, float width, const std::string& text, bool& value) {
@@ -506,63 +587,85 @@ void segmented(eui::Ui& ui,
 }
 
 void composeHeader(eui::Ui& ui, float x, float y, float width) {
-    const float statusW = 156.0f;
-    const float titleW = std::max(220.0f, width - statusW - 18.0f);
-    label(ui, "header.title", x, y, titleW, 38.0f, "CS2 视觉运行控制台", 24.0f, kText);
-    label(ui, "header.sub", x, y + 32.0f, titleW, 22.0f, "统一管理模型、DXGI 输入、HID 标定、干跑预览和实机运行。", 12.0f, kMuted);
+    const float badgesW = 332.0f;
+    const float titleW = std::max(260.0f, width - badgesW - 18.0f);
+    label(ui, "header.title", x, y - 1.0f, titleW, 38.0f, "CS2 视觉运行台", 25.0f, kText);
+    label(ui, "header.sub", x, y + 32.0f, titleW, 22.0f, "训练在 Python，运行在这里：模型输入、HID 标定、预览和实机控制。", 12.0f, kMuted);
 
     const bool running = processRunning.load();
-    ui.rect("header.status.bg")
-        .x(x + width - statusW)
-        .y(y + 8.0f)
-        .size(statusW, 34.0f)
-        .color(running ? alpha(kAmber, 0.14f) : alpha(kAccent, 0.13f))
-        .radius(8.0f)
-        .border(1.0f, running ? alpha(kAmber, 0.42f) : alpha(kAccent, 0.42f))
-        .build();
-    label(ui, "header.status", x + width - statusW, y + 8.0f, statusW, 34.0f, running ? "运行中" : "空闲", 13.0f, running ? kAmber : kAccent, eui::HorizontalAlign::Center);
+    const float bx = x + width - badgesW;
+    badge(ui, "header.status", bx, y + 10.0f, 92.0f, running ? "运行中" : "空闲", running ? kAmber : kAccent);
+    badge(ui, "header.input", bx + 102.0f, y + 10.0f, 100.0f, state.input == 0 ? "DXGI 输入" : "视频输入", kBlue);
+    badge(ui, "header.port", bx + 212.0f, y + 10.0f, 120.0f, "HID " + state.hidPort, state.hidClick ? kRose : kMuted);
+}
+
+void composeWorkflow(eui::Ui& ui, float x, float y, float width) {
+    panel(ui, "workflow.panel", x, y, width, 88.0f);
+
+    const float pad = 14.0f;
+    const float titleW = 116.0f;
+    sectionTitle(ui, "workflow", x + pad, y + 13.0f, titleW, "运行流程", "按这个顺序点");
+
+    const float gap = 10.0f;
+    const float sx = x + pad + titleW + 12.0f;
+    const float stepW = (width - pad * 2.0f - titleW - 12.0f - gap * 3.0f) / 4.0f;
+    const float sy = y + 14.0f;
+    stepCard(ui, "workflow.input", sx, sy, stepW, "1", "验证输入", "先确认能抓画面", kBlue);
+    stepCard(ui, "workflow.hid", sx + (stepW + gap), sy, stepW, "2", "HID 探针", "看板子能不能动", kAmber);
+    stepCard(ui, "workflow.dry", sx + (stepW + gap) * 2.0f, sy, stepW, "3", "干跑预览", "只看识别和路线", kAccent);
+    stepCard(ui, "workflow.live", sx + (stepW + gap) * 3.0f, sy, stepW, "4", "启动实机", "确认后再开左键", kRose);
 }
 
 void composeConfig(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "config.panel", x, y, width, height);
-    label(ui, "config.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "模型与输入", 15.0f, kText);
+    sectionTitle(ui, "config", x + 14.0f, y + 10.0f, width - 28.0f, "路径与识别", "模型、输入源、阵营和截图来源");
 
     const float pad = 14.0f;
     const float gap = 12.0f;
     const float fieldW = (width - pad * 2.0f - gap) * 0.5f;
     const float left = x + pad;
     const float right = left + fieldW + gap;
-    float rowY = y + 46.0f;
+    float rowY = y + 56.0f;
 
-    field(ui, "cfg.exe", left, rowY, width - pad * 2.0f, "分析器程序", state.analyzerExe);
-    rowY += 54.0f;
-    field(ui, "cfg.config", left, rowY, width - pad * 2.0f, "运行配置", state.configPath);
-    rowY += 54.0f;
-    field(ui, "cfg.model", left, rowY, width - pad * 2.0f, "ONNX 模型", state.modelPath);
-    rowY += 54.0f;
-    field(ui, "cfg.schema", left, rowY, width - pad * 2.0f, "Schema 文件", state.schemaPath, "可留空，默认读取模型旁边的 schema");
-    rowY += 54.0f;
+    field(ui, "cfg.exe", left, rowY, width - pad * 2.0f, "运行端 EXE", state.analyzerExe);
+    rowY += 48.0f;
+    field(ui, "cfg.config", left, rowY, width - pad * 2.0f, "配置文件 CFG", state.configPath);
+    rowY += 48.0f;
+    field(ui, "cfg.model", left, rowY, width - pad * 2.0f, "模型 ONNX", state.modelPath);
+    rowY += 48.0f;
+    field(ui, "cfg.schema", left, rowY, width - pad * 2.0f, "Schema JSON", state.schemaPath, "best.onnx.schema.json，实机必须有");
+    rowY += 48.0f;
 
     label(ui, "cfg.backend.label", left, rowY, fieldW, 18.0f, "推理后端", 11.0f, kMuted);
     segmented(ui, "cfg.backend", left, rowY + 20.0f, fieldW, {"ONNX", "CUDA", "ORT", "TRT"}, state.backend);
     label(ui, "cfg.input.label", right, rowY, fieldW, 18.0f, "输入源", 11.0f, kMuted);
     segmented(ui, "cfg.input", right, rowY + 20.0f, fieldW, {"DXGI", "视频"}, state.input);
-    rowY += 56.0f;
+    rowY += 50.0f;
 
     label(ui, "cfg.side.label", left, rowY, fieldW, 18.0f, "我方阵营", 11.0f, kMuted);
-    segmented(ui, "cfg.side", left, rowY + 20.0f, fieldW, {"我是 CT", "我是 T", "未知"}, state.side);
-    field(ui, "cfg.video", right, rowY, fieldW, "视频文件", state.videoPath);
-    rowY += 56.0f;
+    segmented(ui, "cfg.side", left, rowY + 20.0f, fieldW, {"CT", "T", "未知"}, state.side);
+    field(ui, "cfg.video", right, rowY, fieldW, "视频样本", state.videoPath);
+    rowY += 50.0f;
 
     field(ui, "cfg.dxgi.adapter", left, rowY, fieldW, "DXGI 适配器", state.dxgiAdapter);
-    field(ui, "cfg.dxgi.output", right, rowY, fieldW, "显示输出", state.dxgiOutput);
+    field(ui, "cfg.dxgi.output", right, rowY, fieldW, "DXGI 显示器", state.dxgiOutput);
 
-    label(ui, "cfg.note", left, y + height - 30.0f, width - pad * 2.0f, 18.0f, "实机运行会强制校验 Schema；视频或 DXGI 干跑可先不接 HID。", 11.0f, kMuted);
+    if (height >= 428.0f) {
+        ui.rect("cfg.note.bg")
+            .x(left)
+            .y(y + height - 36.0f)
+            .size(width - pad * 2.0f, 24.0f)
+            .color(alpha(kBlue, 0.08f))
+            .radius(7.0f)
+            .border(1.0f, alpha(kBlue, 0.18f))
+            .build();
+        label(ui, "cfg.note", left + 10.0f, y + height - 36.0f, width - pad * 2.0f - 20.0f, 24.0f, "实机运行会强制校验 Schema；先用视频或 DXGI 干跑排错。", 11.0f, kMuted);
+    }
 }
 
 void composeTuning(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "tuning.panel", x, y, width, height);
-    label(ui, "tuning.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "HID 与调参", 15.0f, kText);
+    sectionTitle(ui, "tuning", x + 14.0f, y + 10.0f, width - 28.0f, "HID 与标定", "外置键鼠、动作 TXT、滤波参数");
 
     const float pad = 14.0f;
     const float gap = 10.0f;
@@ -570,39 +673,39 @@ void composeTuning(eui::Ui& ui, float x, float y, float width, float height) {
     const float x0 = x + pad;
     const float x1 = x0 + fieldW + gap;
     const float x2 = x1 + fieldW + gap;
-    float rowY = y + 46.0f;
+    float rowY = y + 56.0f;
 
-    field(ui, "tune.port", x0, rowY, fieldW, "HID 端口", state.hidPort);
-    field(ui, "tune.action.log", x1, rowY, fieldW * 2.0f + gap, "动作日志", state.actionLog);
-    rowY += 54.0f;
+    field(ui, "tune.port", x0, rowY, fieldW, "HID 串口", state.hidPort);
+    field(ui, "tune.action.log", x1, rowY, fieldW * 2.0f + gap, "动作 TXT", state.actionLog);
+    rowY += 48.0f;
 
-    field(ui, "tune.gain", x0, rowY, fieldW, "HID 增益", state.hidGain);
-    field(ui, "tune.step", x1, rowY, fieldW, "单帧限幅", state.hidMaxStep);
-    field(ui, "tune.deadzone", x2, rowY, fieldW, "死区像素", state.hidDeadzone);
-    rowY += 54.0f;
+    field(ui, "tune.gain", x0, rowY, fieldW, "移动增益", state.hidGain);
+    field(ui, "tune.step", x1, rowY, fieldW, "最大步长", state.hidMaxStep);
+    field(ui, "tune.deadzone", x2, rowY, fieldW, "死区 px", state.hidDeadzone);
+    rowY += 48.0f;
 
-    field(ui, "tune.conf", x0, rowY, fieldW, "置信度", state.confidence);
+    field(ui, "tune.conf", x0, rowY, fieldW, "检测置信度", state.confidence);
     field(ui, "tune.nms", x1, rowY, fieldW, "NMS 阈值", state.nms);
     field(ui, "tune.calstep", x2, rowY, fieldW, "标定步长", state.calibrationStep);
-    rowY += 54.0f;
+    rowY += 48.0f;
 
-    field(ui, "tune.noise", x0, rowY, fieldW, "噪声样本", state.calibrationNoiseSamples);
-    field(ui, "tune.probedx", x1, rowY, fieldW, "探针 dx", state.testMoveDx);
-    field(ui, "tune.probedy", x2, rowY, fieldW, "探针 dy", state.testMoveDy);
-    rowY += 54.0f;
+    field(ui, "tune.noise", x0, rowY, fieldW, "噪声采样", state.calibrationNoiseSamples);
+    field(ui, "tune.probedx", x1, rowY, fieldW, "探针 X", state.testMoveDx);
+    field(ui, "tune.probedy", x2, rowY, fieldW, "探针 Y", state.testMoveDy);
+    rowY += 48.0f;
 
-    field(ui, "tune.calout", x0, rowY, width - pad * 2.0f, "标定样本输出", state.calibrationOutput);
-    rowY += 54.0f;
-    field(ui, "tune.calconfig", x0, rowY, width - pad * 2.0f, "调参配置输出", state.calibrationConfig);
-    rowY += 56.0f;
+    field(ui, "tune.calout", x0, rowY, width - pad * 2.0f, "标定样本 TXT", state.calibrationOutput);
+    rowY += 48.0f;
+    field(ui, "tune.calconfig", x0, rowY, width - pad * 2.0f, "调参配置 CFG", state.calibrationConfig);
+    rowY += 50.0f;
 
-    toggle(ui, "tune.preview", x0, rowY, 136.0f, "预览窗口", state.preview);
-    toggle(ui, "tune.click", x0 + 148.0f, rowY, 150.0f, "允许开火", state.hidClick);
+    toggle(ui, "tune.preview", x0, rowY, 128.0f, "预览窗口", state.preview);
+    toggle(ui, "tune.click", x0 + 140.0f, rowY, 142.0f, "允许左键", state.hidClick);
 }
 
 void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "actions.panel", x, y, width, height);
-    label(ui, "actions.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "运行控制", 15.0f, kText);
+    sectionTitle(ui, "actions", x + 14.0f, y + 10.0f, width - 28.0f, "执行控制", processRunning.load() ? "当前有任务在跑" : "空闲，可以启动任务");
     const bool running = processRunning.load();
     const float pad = 14.0f;
     const float gap = 10.0f;
@@ -610,7 +713,7 @@ void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
     const float x0 = x + pad;
     const float x1 = x0 + buttonW + gap;
     const float x2 = x1 + buttonW + gap;
-    const float row0 = y + 46.0f;
+    const float row0 = y + 58.0f;
     const float row1 = row0 + 44.0f;
 
     button(ui, "act.verify", x0, row0, buttonW, "验证输入", 0xF06E, kBlue, [] { runProcess(buildVerifyCommand()); }, running);
@@ -618,26 +721,49 @@ void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
     button(ui, "act.calibrate", x2, row0, buttonW, "执行标定", 0xF1EC, kAccent, [] { runProcess(buildCalibrationCommand()); }, running);
 
     button(ui, "act.dry", x0, row1, buttonW, "干跑预览", 0xF04B, kBlue, [] { runProcess(buildDryRunCommand()); }, running);
-    button(ui, "act.live", x1, row1, buttonW, "启动实机", 0xF05B, kAccent, [] { runProcess(buildLiveCommand()); }, running);
+    button(ui, "act.live", x1, row1, buttonW, "启动实机", 0xF05B, kAccent, [] { runProcess(buildLiveCommand()); }, running, true);
     button(ui, "act.stop", x2, row1, buttonW, "停止", 0xF04D, kRose, [] { stopProcess(); }, !running);
 }
 
 void composeLog(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "log.panel", x, y, width, height);
-    label(ui, "log.title", x + 14.0f, y + 10.0f, width - 28.0f, 24.0f, "输出日志", 15.0f, kText);
+    sectionTitle(ui, "log", x + 14.0f, y + 10.0f, width - 28.0f, "输出日志", "命令、识别、标定和错误都会写在这里");
 
     const auto lines = snapshotLog();
-    const int maxLines = std::max(1, static_cast<int>((height - 52.0f) / 18.0f));
+    if (lines.empty()) {
+        ui.rect("log.empty.bg")
+            .x(x + 14.0f)
+            .y(y + 58.0f)
+            .size(width - 28.0f, 54.0f)
+            .color(alpha(kFieldHover, 0.36f))
+            .radius(8.0f)
+            .border(1.0f, alpha(kBorder, 0.52f))
+            .build();
+        label(ui, "log.empty.title", x + 14.0f, y + 61.0f, width - 28.0f, 24.0f, "还没有输出", 13.0f, kMuted, eui::HorizontalAlign::Center);
+        label(ui, "log.empty.sub", x + 14.0f, y + 84.0f, width - 28.0f, 20.0f, "点击验证、干跑或启动后，这里会显示结果。", 11.0f, kDim, eui::HorizontalAlign::Center);
+        return;
+    }
+
+    const int maxLines = std::max(1, static_cast<int>((height - 62.0f) / 20.0f));
     const int start = std::max(0, static_cast<int>(lines.size()) - maxLines);
-    float lineY = y + 44.0f;
+    const int maxChars = std::max(28, static_cast<int>((width - 42.0f) / 7.0f));
+    float lineY = y + 54.0f;
     for (int index = start; index < static_cast<int>(lines.size()); ++index) {
         std::string line = lines[static_cast<std::size_t>(index)];
-        if (line.size() > 156u) {
-            line.resize(153u);
+        if (line.size() > static_cast<std::size_t>(maxChars)) {
+            line.resize(static_cast<std::size_t>(std::max(0, maxChars - 3)));
             line += "...";
         }
-        label(ui, "log.line." + std::to_string(index), x + 14.0f, lineY, width - 28.0f, 18.0f, line, 11.0f, index == start && lines.size() > static_cast<std::size_t>(maxLines) ? kMuted : kText);
-        lineY += 18.0f;
+        const bool faded = index == start && lines.size() > static_cast<std::size_t>(maxLines);
+        ui.rect("log.line.bg." + std::to_string(index))
+            .x(x + 12.0f)
+            .y(lineY)
+            .size(width - 24.0f, 18.0f)
+            .color(index % 2 == 0 ? alpha(kFieldHover, 0.22f) : alpha(kField, 0.20f))
+            .radius(5.0f)
+            .build();
+        label(ui, "log.line." + std::to_string(index), x + 20.0f, lineY, width - 40.0f, 18.0f, line, 10.8f, faded ? kMuted : kText);
+        lineY += 20.0f;
     }
 }
 
@@ -649,7 +775,7 @@ const DslAppConfig& dslAppConfig() {
         .pageId("cs2_vision_runtime")
         .windowSize(1180, 760)
         .background(kBg)
-        .textFont("assets/JingNanJunJunTi-JinNanJunJunTi-Bold-2.ttf")
+        .textFont("C:/Windows/Fonts/msyh.ttc")
         .iconFont("assets/Font Awesome 7 Free-Solid-900.otf")
         .fps(60.0)
         .showDebugStatsInTitle(false);
@@ -670,24 +796,27 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     const float x = margin;
     const float y = margin;
     const float gap = std::clamp(width * 0.014f, 8.0f, 14.0f);
-    const float contentY = y + 72.0f;
-    const float contentH = std::max(240.0f, height - 72.0f);
+    const float workflowY = y + 66.0f;
+    const float workflowH = 88.0f;
+    const float contentY = workflowY + workflowH + gap;
+    const float contentH = std::max(300.0f, y + height - contentY);
     float rightW = std::clamp(width * 0.38f, 320.0f, 440.0f);
     float leftW = width - rightW - gap;
     if (leftW < 360.0f) {
         leftW = std::max(300.0f, width - gap - 320.0f);
         rightW = std::max(280.0f, width - leftW - gap);
     }
-    const float configLimit = std::max(250.0f, contentH - 150.0f - gap);
-    const float configH = std::min(std::clamp(contentH * 0.67f, 360.0f, 450.0f), configLimit);
+    const float configLimit = std::max(320.0f, contentH - 124.0f - gap);
+    const float configH = std::min(std::clamp(contentH * 0.72f, 382.0f, 420.0f), configLimit);
     const float logY = contentY + configH + gap;
     const float logH = std::max(120.0f, contentY + contentH - logY);
-    const float tuningLimit = std::max(250.0f, contentH - 150.0f - gap);
-    const float tuningH = std::min(std::clamp(contentH * 0.68f, 360.0f, 460.0f), tuningLimit);
+    const float tuningLimit = std::max(330.0f, contentH - 136.0f - gap);
+    const float tuningH = std::min(std::clamp(contentH * 0.72f, 374.0f, 400.0f), tuningLimit);
     const float actionsY = contentY + tuningH + gap;
     const float actionsH = std::max(120.0f, contentY + contentH - actionsY);
 
     composeHeader(ui, x, y, width);
+    composeWorkflow(ui, x, workflowY, width);
     composeConfig(ui, x, contentY, leftW, configH);
     composeLog(ui, x, logY, leftW, logH);
     composeTuning(ui, x + leftW + gap, contentY, rightW, tuningH);
