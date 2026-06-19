@@ -46,6 +46,7 @@ target("vision_analyzer")
         add_defines("VISION_ANALYZER_WITH_RP2350_HID")
     end
     add_files("src/*.cpp")
+    remove_files("src/ui_app.cpp")
     add_packages("opencv")
     add_runenvs("PATH", torch_lib)
     add_runenvs("PATH", tensorrt_libs)

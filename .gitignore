@@ -1,4 +1,5 @@
 .xmake/
+.vscode/
 build/
 build-ui/
 actions.txt

@@ -12,12 +12,20 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
+#include <iostream>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
+#include <streambuf>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#include "vision_analyzer/calibration.hpp"
+#include "vision_analyzer/runtime.hpp"
+#include "vision_analyzer/runtime_config.hpp"
 
 namespace app {
 namespace {
@@ -40,7 +48,6 @@ constexpr eui::Color kRose{0.850f, 0.255f, 0.360f, 1.0f};
 constexpr eui::Color kClear{0.0f, 0.0f, 0.0f, 0.0f};
 
 struct UiState {
-    std::string analyzerExe;
     std::string configPath;
     std::string modelPath;
     std::string schemaPath;
@@ -71,11 +78,8 @@ UiState state;
 std::mutex logMutex;
 std::vector<std::string> logLines;
 std::atomic<bool> processRunning{false};
-
-#if defined(_WIN32)
-std::mutex processMutex;
-HANDLE processHandle = nullptr;
-#endif
+std::atomic_bool stopRequested{false};
+std::mutex streamRedirectMutex;
 
 std::filesystem::path rootPath() {
     return std::filesystem::path(kProjectRoot);
@@ -91,7 +95,6 @@ void initializeState() {
         return;
     }
     initialized = true;
-    state.analyzerExe = rootFile("build/windows/x64/release/vision_analyzer.exe");
     state.configPath = rootFile("runtime.example.cfg");
     state.modelPath = (rootPath() / "../../runs/detect/train/weights/best.onnx").lexically_normal().string();
     state.schemaPath.clear();
@@ -124,238 +127,236 @@ std::vector<std::string> snapshotLog() {
     return logLines;
 }
 
-std::string quoteArg(const std::string& value) {
-    std::string out = "\"";
-    for (char ch : value) {
-        if (ch == '"') {
-            out += "\\\"";
-        } else {
-            out.push_back(ch);
+[[nodiscard]] int parseInt(const std::string& name, const std::string& value) {
+    try {
+        std::size_t used = 0;
+        const int parsed = std::stoi(value, &used);
+        if (used != value.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        return parsed;
+    } catch (const std::exception&) {
+        throw std::runtime_error(name + " 需要整数，当前值：" + value);
+    }
+}
+
+[[nodiscard]] float parseFloat(const std::string& name, const std::string& value) {
+    try {
+        std::size_t used = 0;
+        const float parsed = std::stof(value, &used);
+        if (used != value.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        return parsed;
+    } catch (const std::exception&) {
+        throw std::runtime_error(name + " 需要数字，当前值：" + value);
+    }
+}
+
+[[nodiscard]] std::string projectRelativePath(const std::string& value) {
+    if (value.empty()) {
+        return value;
+    }
+    const std::filesystem::path path(value);
+    if (path.is_absolute()) {
+        return path.lexically_normal().string();
+    }
+    return (rootPath() / path).lexically_normal().string();
+}
+
+[[nodiscard]] vision_analyzer::Backend selectedBackend() {
+    switch (std::clamp(state.backend, 0, 3)) {
+    case 0:
+        return vision_analyzer::Backend::OpenCvOnnx;
+    case 1:
+        return vision_analyzer::Backend::OpenCvCuda;
+    case 2:
+        return vision_analyzer::Backend::OrtCuda;
+    default:
+        return vision_analyzer::Backend::OrtTensorRt;
+    }
+}
+
+[[nodiscard]] vision_analyzer::PlayerSide selectedSide() {
+    switch (std::clamp(state.side, 0, 2)) {
+    case 0:
+        return vision_analyzer::PlayerSide::Ct;
+    case 1:
+        return vision_analyzer::PlayerSide::T;
+    default:
+        return vision_analyzer::PlayerSide::Unknown;
+    }
+}
+
+[[nodiscard]] vision_analyzer::Options makeOptions() {
+    vision_analyzer::Options options;
+    if (!state.configPath.empty()) {
+        vision_analyzer::apply_runtime_config_file(options, state.configPath);
+        options.config_path = state.configPath;
+    }
+    options.backend = selectedBackend();
+    options.model_path = state.modelPath;
+    options.model_schema_path = state.schemaPath;
+    options.input_source = state.input == 0 ? vision_analyzer::InputSource::Dxgi : vision_analyzer::InputSource::Video;
+    options.video_path = state.videoPath;
+    options.dxgi_adapter = parseInt("DXGI 适配器", state.dxgiAdapter);
+    options.dxgi_output = parseInt("DXGI 显示器", state.dxgiOutput);
+    options.player_side = selectedSide();
+    options.hid_port = state.hidPort;
+    options.hid_move_gain = parseFloat("移动增益", state.hidGain);
+    options.hid_max_step = parseInt("最大步长", state.hidMaxStep);
+    options.hid_deadzone_px = parseFloat("死区 px", state.hidDeadzone);
+    options.hid_click_enabled = state.hidClick;
+    options.confidence = parseFloat("检测置信度", state.confidence);
+    options.nms_threshold = parseFloat("NMS 阈值", state.nms);
+    options.preview = state.preview;
+    options.action_log_path = projectRelativePath(state.actionLog);
+    options.calibration_output_path = projectRelativePath(state.calibrationOutput);
+    options.calibration_config_output_path = projectRelativePath(state.calibrationConfig);
+    options.calibration_step_counts = parseInt("标定步长", state.calibrationStep);
+    options.calibration_noise_samples = parseInt("噪声采样", state.calibrationNoiseSamples);
+    options.hid_test_dx = parseInt("探针 X", state.testMoveDx);
+    options.hid_test_dy = parseInt("探针 Y", state.testMoveDy);
+    return options;
+}
+
+class UiLogStreambuf final : public std::streambuf {
+public:
+    ~UiLogStreambuf() override {
+        flushLine();
+    }
+
+protected:
+    int overflow(int ch) override {
+        if (ch == traits_type::eof()) {
+            return traits_type::not_eof(ch);
+        }
+        writeChar(static_cast<char>(ch));
+        return ch;
+    }
+
+    std::streamsize xsputn(const char* text, std::streamsize count) override {
+        for (std::streamsize index = 0; index < count; ++index) {
+            writeChar(text[index]);
+        }
+        return count;
+    }
+
+private:
+    void writeChar(char ch) {
+        if (ch == '\n') {
+            flushLine();
+            return;
+        }
+        if (ch != '\r') {
+            pending_.push_back(ch);
         }
     }
-    out.push_back('"');
-    return out;
-}
 
-void addArg(std::vector<std::string>& args, const std::string& key, const std::string& value) {
-    if (!value.empty()) {
-        args.push_back(key);
-        args.push_back(value);
+    void flushLine() {
+        if (!pending_.empty()) {
+            appendLog(pending_);
+            pending_.clear();
+        }
     }
-}
 
-const char* backendName() {
-    static constexpr const char* kNames[] = {"opencv-onnx", "opencv-cuda", "ort-cuda", "ort-tensorrt"};
-    return kNames[std::clamp(state.backend, 0, 3)];
-}
+    std::string pending_;
+};
 
-const char* inputName() {
-    return state.input == 0 ? "dxgi" : "video";
-}
+class ScopedStreamRedirect final {
+public:
+    explicit ScopedStreamRedirect(UiLogStreambuf& buffer)
+        : oldOut_(std::cout.rdbuf(&buffer)),
+          oldErr_(std::cerr.rdbuf(&buffer)) {}
 
-const char* sideName() {
-    static constexpr const char* kNames[] = {"ct", "t", "unknown"};
-    return kNames[std::clamp(state.side, 0, 2)];
-}
-
-std::vector<std::string> commonArgs() {
-    std::vector<std::string> args;
-    addArg(args, "--config", state.configPath);
-    addArg(args, "--backend", backendName());
-    addArg(args, "--model", state.modelPath);
-    addArg(args, "--schema", state.schemaPath);
-    if (state.input == 0) {
-        addArg(args, "--input", "dxgi");
-        addArg(args, "--dxgi-adapter", state.dxgiAdapter);
-        addArg(args, "--dxgi-output", state.dxgiOutput);
-    } else {
-        addArg(args, "--video", state.videoPath);
+    ~ScopedStreamRedirect() {
+        std::cout.rdbuf(oldOut_);
+        std::cerr.rdbuf(oldErr_);
     }
-    addArg(args, "--player-side", sideName());
-    addArg(args, "--hid-port", state.hidPort);
-    addArg(args, "--hid-gain", state.hidGain);
-    addArg(args, "--hid-max-step", state.hidMaxStep);
-    addArg(args, "--hid-deadzone", state.hidDeadzone);
-    addArg(args, "--conf", state.confidence);
-    addArg(args, "--nms", state.nms);
-    addArg(args, "--action-log", state.actionLog);
-    if (state.preview) {
-        args.push_back("--preview");
-    }
-    if (state.hidClick) {
-        args.push_back("--hid-click");
-    }
-    return args;
-}
 
-std::string commandLine(const std::vector<std::string>& args) {
-    std::string command = quoteArg(state.analyzerExe);
-    for (const auto& arg : args) {
-        command.push_back(' ');
-        command += quoteArg(arg);
-    }
-    return command;
-}
+private:
+    std::streambuf* oldOut_ = nullptr;
+    std::streambuf* oldErr_ = nullptr;
+};
 
-std::string buildVerifyCommand() {
-    std::vector<std::string> args;
-    addArg(args, "--input", inputName());
-    if (state.input == 0) {
-        addArg(args, "--dxgi-adapter", state.dxgiAdapter);
-        addArg(args, "--dxgi-output", state.dxgiOutput);
-    } else {
-        addArg(args, "--video", state.videoPath);
-    }
-    args.push_back("--verify-input");
-    return commandLine(args);
-}
-
-std::string buildHidProbeCommand() {
-    std::vector<std::string> args;
-    addArg(args, "--hid-port", state.hidPort);
-    args.push_back("--test-hid-move");
-    args.push_back(state.testMoveDx);
-    args.push_back(state.testMoveDy);
-    return commandLine(args);
-}
-
-std::string buildCalibrationCommand() {
-    std::vector<std::string> args;
-    args.push_back("--calibrate-hid");
-    addArg(args, "--hid-port", state.hidPort);
-    addArg(args, "--dxgi-adapter", state.dxgiAdapter);
-    addArg(args, "--dxgi-output", state.dxgiOutput);
-    addArg(args, "--calibration-step", state.calibrationStep);
-    addArg(args, "--calibration-noise-samples", state.calibrationNoiseSamples);
-    addArg(args, "--calibration-output", state.calibrationOutput);
-    addArg(args, "--calibration-config-output", state.calibrationConfig);
-    return commandLine(args);
-}
-
-std::string buildDryRunCommand() {
-    auto args = commonArgs();
-    args.push_back("--dry-run");
-    return commandLine(args);
-}
-
-std::string buildLiveCommand() {
-    return commandLine(commonArgs());
-}
-
-#if defined(_WIN32)
-void clearProcessHandle() {
-    std::lock_guard<std::mutex> lock(processMutex);
-    processHandle = nullptr;
-}
-
-void runProcess(std::string command) {
+void runTask(std::string name, std::function<void()> task) {
     if (processRunning.exchange(true)) {
-        appendLog("运行器：已有进程在执行");
+        appendLog("运行器：已有任务在执行");
         return;
     }
 
-    appendLog("> " + command);
-    std::thread([command = std::move(command)] {
-        SECURITY_ATTRIBUTES security{};
-        security.nLength = sizeof(security);
-        security.bInheritHandle = TRUE;
-
-        HANDLE readPipe = nullptr;
-        HANDLE writePipe = nullptr;
-        if (!CreatePipe(&readPipe, &writePipe, &security, 0)) {
-            appendLog("运行器：创建输出管道失败");
-            processRunning = false;
-            return;
+    stopRequested = false;
+    appendLog("运行器：直接调用 " + name);
+    std::thread([name = std::move(name), task = std::move(task)] {
+        try {
+            std::lock_guard<std::mutex> streamLock(streamRedirectMutex);
+            UiLogStreambuf buffer;
+            ScopedStreamRedirect redirect(buffer);
+            task();
+            appendLog("运行器：任务完成 " + name);
+        } catch (const std::exception& error) {
+            appendLog(std::string("错误：") + error.what());
+        } catch (...) {
+            appendLog("错误：未知异常");
         }
-        SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
-
-        STARTUPINFOA startup{};
-        startup.cb = sizeof(startup);
-        startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-        startup.hStdOutput = writePipe;
-        startup.hStdError = writePipe;
-
-        PROCESS_INFORMATION process{};
-        std::vector<char> mutableCommand(command.begin(), command.end());
-        mutableCommand.push_back('\0');
-
-        const BOOL ok = CreateProcessA(
-            nullptr,
-            mutableCommand.data(),
-            nullptr,
-            nullptr,
-            TRUE,
-            CREATE_NO_WINDOW,
-            nullptr,
-            kProjectRoot,
-            &startup,
-            &process
-        );
-        CloseHandle(writePipe);
-
-        if (!ok) {
-            appendLog("运行器：启动进程失败，请检查分析器程序路径");
-            CloseHandle(readPipe);
-            processRunning = false;
-            return;
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(processMutex);
-            processHandle = process.hProcess;
-        }
-
-        std::string pending;
-        char buffer[512]{};
-        DWORD read = 0;
-        while (ReadFile(readPipe, buffer, sizeof(buffer) - 1, &read, nullptr) && read > 0) {
-            buffer[read] = '\0';
-            pending.append(buffer, read);
-            std::size_t newline = std::string::npos;
-            while ((newline = pending.find('\n')) != std::string::npos) {
-                std::string line = pending.substr(0, newline);
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                appendLog(line);
-                pending.erase(0, newline + 1);
-            }
-        }
-        if (!pending.empty()) {
-            appendLog(pending);
-        }
-
-        WaitForSingleObject(process.hProcess, INFINITE);
-        DWORD exitCode = 0;
-        GetExitCodeProcess(process.hProcess, &exitCode);
-        appendLog("运行器：进程退出，代码 " + std::to_string(exitCode));
-
-        clearProcessHandle();
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        CloseHandle(readPipe);
         processRunning = false;
     }).detach();
 }
 
-void stopProcess() {
-    std::lock_guard<std::mutex> lock(processMutex);
-    if (processHandle != nullptr) {
-        TerminateProcess(processHandle, 130);
-        appendLog("运行器：已请求停止当前进程");
-    }
+void runVerifyInput() {
+    runTask("验证输入", [] {
+        auto options = makeOptions();
+        options.verify_input = true;
+        vision_analyzer::validate_options(options);
+        vision_analyzer::verify_input(options);
+    });
 }
-#else
-void runProcess(std::string command) {
-    appendLog("运行器：进程启动目前只支持 Windows");
-    appendLog("> " + command);
+
+void runHidProbe() {
+    runTask("HID 探针", [] {
+        auto options = makeOptions();
+        options.test_hid_move = true;
+        vision_analyzer::validate_options(options);
+        vision_analyzer::test_hid_move(options);
+    });
+}
+
+void runCalibration() {
+    runTask("执行标定", [] {
+        auto options = makeOptions();
+        options.calibrate_hid = true;
+        options.input_source = vision_analyzer::InputSource::Dxgi;
+        vision_analyzer::validate_options(options);
+        vision_analyzer::run_hid_calibration(options);
+        appendLog("标定样本：" + options.calibration_output_path);
+        appendLog("调参配置：" + options.calibration_config_output_path);
+    });
+}
+
+void runDryRun() {
+    runTask("干跑预览", [] {
+        auto options = makeOptions();
+        options.dry_run = true;
+        vision_analyzer::validate_options(options);
+        vision_analyzer::run(options, &stopRequested);
+    });
+}
+
+void runLive() {
+    runTask("启动实机", [] {
+        auto options = makeOptions();
+        options.dry_run = false;
+        vision_analyzer::validate_options(options);
+        vision_analyzer::run(options, &stopRequested);
+    });
 }
 
 void stopProcess() {
-    appendLog("运行器：停止进程目前只支持 Windows");
+    if (processRunning.load()) {
+        stopRequested = true;
+        appendLog("运行器：已请求停止，当前帧处理完后退出");
+    }
 }
-#endif
 
 void label(eui::Ui& ui,
            const std::string& id,
@@ -627,8 +628,6 @@ void composeConfig(eui::Ui& ui, float x, float y, float width, float height) {
     const float right = left + fieldW + gap;
     float rowY = y + 56.0f;
 
-    field(ui, "cfg.exe", left, rowY, width - pad * 2.0f, "运行端 EXE", state.analyzerExe);
-    rowY += 48.0f;
     field(ui, "cfg.config", left, rowY, width - pad * 2.0f, "配置文件 CFG", state.configPath);
     rowY += 48.0f;
     field(ui, "cfg.model", left, rowY, width - pad * 2.0f, "模型 ONNX", state.modelPath);
@@ -716,12 +715,12 @@ void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
     const float row0 = y + 58.0f;
     const float row1 = row0 + 44.0f;
 
-    button(ui, "act.verify", x0, row0, buttonW, "验证输入", 0xF06E, kBlue, [] { runProcess(buildVerifyCommand()); }, running);
-    button(ui, "act.probe", x1, row0, buttonW, "HID 探针", 0xF11C, kAmber, [] { runProcess(buildHidProbeCommand()); }, running);
-    button(ui, "act.calibrate", x2, row0, buttonW, "执行标定", 0xF1EC, kAccent, [] { runProcess(buildCalibrationCommand()); }, running);
+    button(ui, "act.verify", x0, row0, buttonW, "验证输入", 0xF06E, kBlue, [] { runVerifyInput(); }, running);
+    button(ui, "act.probe", x1, row0, buttonW, "HID 探针", 0xF11C, kAmber, [] { runHidProbe(); }, running);
+    button(ui, "act.calibrate", x2, row0, buttonW, "执行标定", 0xF1EC, kAccent, [] { runCalibration(); }, running);
 
-    button(ui, "act.dry", x0, row1, buttonW, "干跑预览", 0xF04B, kBlue, [] { runProcess(buildDryRunCommand()); }, running);
-    button(ui, "act.live", x1, row1, buttonW, "启动实机", 0xF05B, kAccent, [] { runProcess(buildLiveCommand()); }, running, true);
+    button(ui, "act.dry", x0, row1, buttonW, "干跑预览", 0xF04B, kBlue, [] { runDryRun(); }, running);
+    button(ui, "act.live", x1, row1, buttonW, "启动实机", 0xF05B, kAccent, [] { runLive(); }, running, true);
     button(ui, "act.stop", x2, row1, buttonW, "停止", 0xF04D, kRose, [] { stopProcess(); }, !running);
 }
 

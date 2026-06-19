@@ -1,4 +1,5 @@
 #include <chrono>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -24,6 +25,7 @@
 #include "vision_analyzer/frame_source.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/model_schema.hpp"
+#include "vision_analyzer/runtime.hpp"
 #include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/tracking.hpp"
 
@@ -35,7 +37,6 @@
 #endif
 
 namespace vision_analyzer {
-namespace {
 
 [[nodiscard]] Options parse_args(int argc, char** argv) {
     Options options;
@@ -365,7 +366,11 @@ void test_hid_move(const Options& options) {
 #endif
 }
 
-void run(const Options& options) {
+void run(const Options& options, const std::atomic_bool* stop_requested) {
+    const auto should_stop = [stop_requested] {
+        return stop_requested != nullptr && stop_requested->load();
+    };
+
     apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     if (options.list_dxgi_outputs) {
         print_dxgi_outputs(std::cout);
@@ -448,7 +453,7 @@ void run(const Options& options) {
               << " model=" << options.model_path << '\n';
 
     CapturedFrame captured_frame;
-    while (frame_source->read(captured_frame)) {
+    while (!should_stop() && frame_source->read(captured_frame)) {
         if (options.max_frames > 0 && processed_index >= options.max_frames) {
             break;
         }
@@ -527,6 +532,9 @@ void run(const Options& options) {
         ++processed_index;
     }
 
+    if (should_stop()) {
+        std::cout << "stopped=1\n";
+    }
     std::cout << "processed_frames=" << processed_index << '\n';
     if (hid_sender) {
         hid_sender->stop_all();
@@ -534,9 +542,9 @@ void run(const Options& options) {
     frame_source->release();
 }
 
-}  // namespace
 }  // namespace vision_analyzer
 
+#if !defined(VISION_ANALYZER_NO_CLI_MAIN)
 int main(int argc, char** argv) {
     try {
         const auto options = vision_analyzer::parse_args(argc, argv);
@@ -548,3 +556,4 @@ int main(int argc, char** argv) {
         return 1;
     }
 }
+#endif
