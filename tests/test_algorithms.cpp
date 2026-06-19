@@ -129,6 +129,12 @@ void test_input_source_parser_accepts_video_and_dxgi() {
     require(parse_input_source("video") == InputSource::Video, "input parser should accept video");
     require(parse_input_source("dxgi") == InputSource::Dxgi, "input parser should accept dxgi");
     require(input_source_name(InputSource::Dxgi) == "dxgi", "input source name should report dxgi");
+    require(parse_dxgi_gpu_preference("minimum-power") == DxgiGpuPreference::MinimumPower,
+            "DXGI GPU preference parser should accept minimum-power");
+    require(parse_dxgi_gpu_preference("integrated") == DxgiGpuPreference::MinimumPower,
+            "DXGI GPU preference parser should accept integrated alias");
+    require(parse_dxgi_gpu_preference("high-performance") == DxgiGpuPreference::HighPerformance,
+            "DXGI GPU preference parser should accept high-performance");
 }
 
 void test_track_manager_keeps_id_for_small_motion() {
@@ -463,6 +469,8 @@ void test_runtime_config_file_overrides_tuning_and_io() {
         output << "input=dxgi\n"
                << "dxgi_adapter=1\n"
                << "dxgi_output=2\n"
+               << "dxgi_gpu_preference=minimum-power\n"
+               << "dxgi_debug=true\n"
                << "dxgi_roi_x=100\n"
                << "dxgi_roi_y=50\n"
                << "dxgi_roi_width=800\n"
@@ -482,6 +490,9 @@ void test_runtime_config_file_overrides_tuning_and_io() {
 
     require(options.input_source == InputSource::Dxgi, "config should set DXGI input");
     require(options.dxgi_adapter == 1 && options.dxgi_output == 2, "config should set DXGI adapter/output");
+    require(options.dxgi_gpu_preference == DxgiGpuPreference::MinimumPower,
+            "config should set DXGI GPU preference");
+    require(options.dxgi_debug, "config should set DXGI debug flag");
     require(
         options.dxgi_roi.x == 100 && options.dxgi_roi.y == 50 &&
         options.dxgi_roi.width == 800 && options.dxgi_roi.height == 600,

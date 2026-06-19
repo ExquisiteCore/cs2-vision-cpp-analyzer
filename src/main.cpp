@@ -66,6 +66,10 @@ namespace {
             options.dxgi_output = std::stoi(require_value(key));
         } else if (key == "--dxgi-timeout") {
             options.dxgi_timeout_ms = std::stoi(require_value(key));
+        } else if (key == "--dxgi-gpu-preference") {
+            options.dxgi_gpu_preference = parse_dxgi_gpu_preference(require_value(key));
+        } else if (key == "--dxgi-debug") {
+            options.dxgi_debug = true;
         } else if (key == "--dxgi-roi") {
             options.dxgi_roi.x = std::stoi(require_value(key));
             options.dxgi_roi.y = std::stoi(require_value(key));
@@ -73,6 +77,9 @@ namespace {
             options.dxgi_roi.height = std::stoi(require_value(key));
         } else if (key == "--list-dxgi-outputs") {
             options.list_dxgi_outputs = true;
+            options.input_source = InputSource::Dxgi;
+        } else if (key == "--probe-dxgi-outputs") {
+            options.probe_dxgi_outputs = true;
             options.input_source = InputSource::Dxgi;
         } else if (key == "--verify-input") {
             options.verify_input = true;
@@ -140,10 +147,13 @@ namespace {
                 << "  --input NAME      video or dxgi; --video also selects video input\n"
                 << "  --video PATH      video file for offline tuning\n"
                 << "  --list-dxgi-outputs  print DXGI adapters/outputs and exit\n"
+                << "  --probe-dxgi-outputs  test Desktop Duplication support for every DXGI output and exit\n"
                 << "  --verify-input    capture one frame, print dimensions/mean, and exit\n"
                 << "  --dxgi-adapter N  DXGI adapter index for desktop duplication, default 0\n"
                 << "  --dxgi-output N   DXGI output/monitor index for desktop duplication, default 0\n"
                 << "  --dxgi-timeout N  DXGI frame wait timeout in ms, default 16\n"
+                << "  --dxgi-gpu-preference NAME  default, minimum-power, or high-performance\n"
+                << "  --dxgi-debug    print first captured DXGI texture format and byte statistics\n"
                 << "  --dxgi-roi X Y W H  crop live DXGI input to this ROI before inference\n"
                 << "  --hid-port COMx   send relative mouse moves through the RP2350 HID bridge SDK\n"
                 << "  --hid-gain 1.0    multiply target offset before sending relative mouse movement\n"
@@ -204,7 +214,7 @@ void validate_options(const Options& options) {
         !std::isfinite(options.tuning.kalman_error_covariance) || options.tuning.kalman_error_covariance <= 0.0F) {
         throw std::runtime_error("Kalman tuning values must be finite and greater than 0");
     }
-    if (options.list_dxgi_outputs || options.verify_input) {
+    if (options.list_dxgi_outputs || options.probe_dxgi_outputs || options.verify_input) {
         return;
     }
     if (options.calibrate_hid) {
@@ -295,8 +305,13 @@ void draw_overlay(cv::Mat& frame, const std::vector<Detection>& detections, cons
 }
 
 void run(const Options& options) {
+    apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     if (options.list_dxgi_outputs) {
         print_dxgi_outputs(std::cout);
+        return;
+    }
+    if (options.probe_dxgi_outputs) {
+        probe_dxgi_outputs(std::cout);
         return;
     }
     if (options.verify_input) {

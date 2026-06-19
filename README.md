@@ -38,6 +38,7 @@ DXGI Desktop Duplication input captures a live Windows monitor:
 
 ```powershell
 xmake run vision_analyzer --list-dxgi-outputs
+xmake run vision_analyzer --probe-dxgi-outputs
 xmake run vision_analyzer --input dxgi --dxgi-output 0 --verify-input
 xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --dry-run --preview
 ```
@@ -45,6 +46,25 @@ xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-tr
 Use `--dxgi-roi X Y W H` to crop the selected output before inference. ROI
 coordinates are relative to the DXGI output. The target offset is then measured
 from the ROI center, so a centered ROI is the normal choice for live tuning.
+
+On hybrid GPU laptops, Desktop Duplication must run on the adapter that owns the
+actual display. If `--probe-dxgi-outputs` shows `duplicate_output=0x887A0004`
+for NVIDIA while dxdiag reports the internal panel on Intel, set the built
+binary to Windows Graphics "Power saving" / integrated GPU and start the binary
+again:
+
+```powershell
+$exe = (Resolve-Path .\build\windows\x64\release\vision_analyzer.exe).Path
+New-Item -Path 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences' -Force | Out-Null
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences' -Name $exe -Value 'GpuPreference=1;' -PropertyType String -Force
+.\build\windows\x64\release\vision_analyzer.exe --probe-dxgi-outputs
+.\build\windows\x64\release\vision_analyzer.exe --input dxgi --verify-input
+```
+
+`--dxgi-debug` prints the first DXGI frame metadata and texture byte statistics.
+The runtime skips initial pointer-only frames (`AccumulatedFrames=0`) because
+some hybrid systems return an all-black surface before the first real desktop
+present.
 
 Live SDK movement:
 

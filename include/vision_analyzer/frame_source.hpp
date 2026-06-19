@@ -27,6 +27,8 @@ public:
 };
 
 [[nodiscard]] std::unique_ptr<FrameSource> create_frame_source(const Options& options);
+void apply_dxgi_gpu_preference(DxgiGpuPreference preference);
 void print_dxgi_outputs(std::ostream& output);
+void probe_dxgi_outputs(std::ostream& output);
 
 }  // namespace vision_analyzer

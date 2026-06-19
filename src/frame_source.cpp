@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <iterator>
 #include <ostream>
 #include <sstream>
@@ -16,7 +17,7 @@
 #define NOMINMAX
 #endif
 #include <d3d11.h>
-#include <dxgi1_2.h>
+#include <dxgi1_6.h>
 #include <windows.h>
 #include <wrl/client.h>
 #endif
@@ -94,6 +95,28 @@ void throw_if_failed(T result, const char* message) {
     return result;
 }
 
+[[nodiscard]] std::string hresult_hex(HRESULT result) {
+    std::ostringstream stream;
+    stream << "0x" << std::hex << std::uppercase << static_cast<unsigned long>(result);
+    return stream.str();
+}
+
+[[nodiscard]] const char* output_rotation_name(DXGI_MODE_ROTATION rotation) {
+    switch (rotation) {
+    case DXGI_MODE_ROTATION_UNSPECIFIED:
+        return "unspecified";
+    case DXGI_MODE_ROTATION_IDENTITY:
+        return "identity";
+    case DXGI_MODE_ROTATION_ROTATE90:
+        return "rotate90";
+    case DXGI_MODE_ROTATION_ROTATE180:
+        return "rotate180";
+    case DXGI_MODE_ROTATION_ROTATE270:
+        return "rotate270";
+    }
+    return "unknown";
+}
+
 class DxgiFrameSource final : public FrameSource {
 public:
     explicit DxgiFrameSource(const Options& options)
@@ -101,6 +124,7 @@ public:
           output_index_(options.dxgi_output),
           timeout_ms_(options.dxgi_timeout_ms),
           roi_(options.dxgi_roi),
+          debug_(options.dxgi_debug),
           start_time_ms_(now_ms()) {
         initialize();
     }
@@ -122,6 +146,20 @@ public:
                 continue;
             }
             throw_if_failed(acquire_result, "DXGI AcquireNextFrame failed");
+            if (debug_ && !debug_frame_info_printed_) {
+                std::cout << "dxgi_frame_info"
+                          << " accumulated=" << frame_info.AccumulatedFrames
+                          << " rects_coalesced=" << (frame_info.RectsCoalesced ? 1 : 0)
+                          << " protected_content_masked=" << (frame_info.ProtectedContentMaskedOut ? 1 : 0)
+                          << " last_present=" << frame_info.LastPresentTime.QuadPart
+                          << " last_mouse=" << frame_info.LastMouseUpdateTime.QuadPart
+                          << '\n';
+                debug_frame_info_printed_ = true;
+            }
+            if (frame_info.AccumulatedFrames == 0 && frame_index_ == 0) {
+                duplication_->ReleaseFrame();
+                continue;
+            }
 
             try {
                 Microsoft::WRL::ComPtr<ID3D11Texture2D> desktop_texture;
@@ -231,6 +269,31 @@ private:
 
         D3D11_MAPPED_SUBRESOURCE mapped{};
         throw_if_failed(context_->Map(staging_texture_.Get(), 0, D3D11_MAP_READ, 0, &mapped), "Map DXGI staging texture failed");
+        if (debug_ && !debug_printed_) {
+            const auto* bytes = static_cast<const unsigned char*>(mapped.pData);
+            const std::size_t sample_size = std::min<std::size_t>(
+                static_cast<std::size_t>(mapped.RowPitch) * static_cast<std::size_t>(desc.Height),
+                64U * 1024U
+            );
+            std::size_t nonzero = 0;
+            unsigned char max_value = 0;
+            for (std::size_t index = 0; index < sample_size; ++index) {
+                if (bytes[index] != 0) {
+                    ++nonzero;
+                    max_value = std::max(max_value, bytes[index]);
+                }
+            }
+            std::cout << "dxgi_debug"
+                      << " width=" << desc.Width
+                      << " height=" << desc.Height
+                      << " format=" << desc.Format
+                      << " row_pitch=" << mapped.RowPitch
+                      << " sample_bytes=" << sample_size
+                      << " sample_nonzero=" << nonzero
+                      << " sample_max=" << static_cast<int>(max_value)
+                      << '\n';
+            debug_printed_ = true;
+        }
         cv::Mat bgra(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_8UC4, mapped.pData, mapped.RowPitch);
         cv::Mat bgr;
         cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
@@ -256,6 +319,9 @@ private:
     int output_index_ = 0;
     int timeout_ms_ = 16;
     cv::Rect roi_;
+    bool debug_ = false;
+    bool debug_printed_ = false;
+    bool debug_frame_info_printed_ = false;
     int frame_index_ = 0;
     double start_time_ms_ = 0.0;
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
@@ -303,29 +369,179 @@ void print_dxgi_outputs(std::ostream& output) {
         }
         DXGI_ADAPTER_DESC1 adapter_desc{};
         adapter->GetDesc1(&adapter_desc);
+        output << "adapter=" << adapter_index
+               << " name=\"" << narrow_utf8(adapter_desc.Description) << "\""
+               << " vendor=0x" << std::hex << std::uppercase << adapter_desc.VendorId
+               << " device=0x" << adapter_desc.DeviceId
+               << std::dec
+               << " flags=" << adapter_desc.Flags
+               << " dedicated_video_mb=" << adapter_desc.DedicatedVideoMemory / (1024 * 1024)
+               << " shared_system_mb=" << adapter_desc.SharedSystemMemory / (1024 * 1024)
+               << '\n';
 
+        bool had_output = false;
         for (UINT output_index = 0;; ++output_index) {
             Microsoft::WRL::ComPtr<IDXGIOutput> dxgi_output;
             if (adapter->EnumOutputs(output_index, &dxgi_output) == DXGI_ERROR_NOT_FOUND) {
                 break;
             }
+            had_output = true;
             DXGI_OUTPUT_DESC output_desc{};
             dxgi_output->GetDesc(&output_desc);
             const RECT& rect = output_desc.DesktopCoordinates;
-            output << "adapter=" << adapter_index
-                   << " output=" << output_index
-                   << " adapter_name=\"" << narrow_utf8(adapter_desc.Description) << "\""
+            output << "  output=" << output_index
                    << " output_name=\"" << narrow_utf8(output_desc.DeviceName) << "\""
                    << " desktop_left=" << rect.left
                    << " desktop_top=" << rect.top
                    << " desktop_right=" << rect.right
                    << " desktop_bottom=" << rect.bottom
                    << " attached=" << (output_desc.AttachedToDesktop ? 1 : 0)
+                   << " rotation=" << output_rotation_name(output_desc.Rotation)
                    << '\n';
+        }
+        if (!had_output) {
+            output << "  output=none\n";
         }
     }
 #else
     output << "DXGI output enumeration is only available on Windows\n";
+#endif
+}
+
+void apply_dxgi_gpu_preference(DxgiGpuPreference preference) {
+#if defined(_WIN32)
+    if (preference == DxgiGpuPreference::Default) {
+        return;
+    }
+    DXGI_GPU_PREFERENCE dxgi_preference = DXGI_GPU_PREFERENCE_UNSPECIFIED;
+    switch (preference) {
+    case DxgiGpuPreference::Default:
+        dxgi_preference = DXGI_GPU_PREFERENCE_UNSPECIFIED;
+        break;
+    case DxgiGpuPreference::MinimumPower:
+        dxgi_preference = DXGI_GPU_PREFERENCE_MINIMUM_POWER;
+        break;
+    case DxgiGpuPreference::HighPerformance:
+        dxgi_preference = DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE;
+        break;
+    }
+    using SetProcessDefaultGpuPreferenceFn = HRESULT(WINAPI*)(DXGI_GPU_PREFERENCE);
+    HMODULE dxgi_module = GetModuleHandleA("dxgi.dll");
+    if (dxgi_module == nullptr) {
+        dxgi_module = LoadLibraryA("dxgi.dll");
+    }
+    if (dxgi_module == nullptr) {
+        throw std::runtime_error("failed to load dxgi.dll for GPU preference");
+    }
+    const auto function = reinterpret_cast<SetProcessDefaultGpuPreferenceFn>(
+        GetProcAddress(dxgi_module, "SetProcessDefaultGpuPreference")
+    );
+    if (function == nullptr) {
+        std::cout << "dxgi_gpu_preference=unavailable requested=" << dxgi_gpu_preference_name(preference) << '\n';
+        return;
+    }
+    const HRESULT result = function(dxgi_preference);
+    if (FAILED(result)) {
+        std::cout << "dxgi_gpu_preference=failed requested=" << dxgi_gpu_preference_name(preference)
+                  << " hresult=" << hresult_hex(result) << '\n';
+        return;
+    }
+    std::cout << "dxgi_gpu_preference=applied requested=" << dxgi_gpu_preference_name(preference) << '\n';
+#else
+    (void)preference;
+#endif
+}
+
+void probe_dxgi_outputs(std::ostream& output) {
+#if defined(_WIN32)
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    throw_if_failed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "CreateDXGIFactory1 failed");
+
+    for (UINT adapter_index = 0;; ++adapter_index) {
+        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(adapter_index, &adapter) == DXGI_ERROR_NOT_FOUND) {
+            break;
+        }
+        DXGI_ADAPTER_DESC1 adapter_desc{};
+        adapter->GetDesc1(&adapter_desc);
+        output << "probe_adapter=" << adapter_index
+               << " name=\"" << narrow_utf8(adapter_desc.Description) << "\""
+               << " flags=" << adapter_desc.Flags
+               << '\n';
+
+        for (UINT output_index = 0;; ++output_index) {
+            Microsoft::WRL::ComPtr<IDXGIOutput> base_output;
+            if (adapter->EnumOutputs(output_index, &base_output) == DXGI_ERROR_NOT_FOUND) {
+                break;
+            }
+            DXGI_OUTPUT_DESC output_desc{};
+            base_output->GetDesc(&output_desc);
+
+            Microsoft::WRL::ComPtr<IDXGIOutput1> output1;
+            const HRESULT as_output1 = base_output.As(&output1);
+            output << "  probe_output=" << output_index
+                   << " name=\"" << narrow_utf8(output_desc.DeviceName) << "\""
+                   << " attached=" << (output_desc.AttachedToDesktop ? 1 : 0)
+                   << " as_output1=" << hresult_hex(as_output1);
+            if (FAILED(as_output1)) {
+                output << '\n';
+                continue;
+            }
+
+            const D3D_FEATURE_LEVEL requested_levels[] = {
+                D3D_FEATURE_LEVEL_11_1,
+                D3D_FEATURE_LEVEL_11_0,
+                D3D_FEATURE_LEVEL_10_1,
+                D3D_FEATURE_LEVEL_10_0,
+            };
+            D3D_FEATURE_LEVEL selected_level{};
+            Microsoft::WRL::ComPtr<ID3D11Device> device;
+            Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+            const HRESULT create_device = D3D11CreateDevice(
+                adapter.Get(),
+                D3D_DRIVER_TYPE_UNKNOWN,
+                nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                requested_levels,
+                static_cast<UINT>(std::size(requested_levels)),
+                D3D11_SDK_VERSION,
+                &device,
+                &selected_level,
+                &context
+            );
+            output << " create_device=" << hresult_hex(create_device);
+            if (FAILED(create_device)) {
+                output << '\n';
+                continue;
+            }
+
+            Microsoft::WRL::ComPtr<IDXGIOutputDuplication> duplication;
+            const HRESULT duplicate = output1->DuplicateOutput(device.Get(), &duplication);
+            output << " duplicate_output=" << hresult_hex(duplicate);
+
+            Microsoft::WRL::ComPtr<IDXGIOutput5> output5;
+            const HRESULT as_output5 = base_output.As(&output5);
+            output << " as_output5=" << hresult_hex(as_output5);
+            if (SUCCEEDED(as_output5)) {
+                const DXGI_FORMAT formats[] = {
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    DXGI_FORMAT_R8G8B8A8_UNORM,
+                };
+                Microsoft::WRL::ComPtr<IDXGIOutputDuplication> duplication1;
+                const HRESULT duplicate1 = output5->DuplicateOutput1(
+                    device.Get(),
+                    0,
+                    static_cast<UINT>(std::size(formats)),
+                    formats,
+                    &duplication1
+                );
+                output << " duplicate_output1=" << hresult_hex(duplicate1);
+            }
+            output << '\n';
+        }
+    }
+#else
+    output << "DXGI output probing is only available on Windows\n";
 #endif
 }
 

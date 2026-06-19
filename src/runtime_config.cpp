@@ -67,6 +67,10 @@ void apply_entry(Options& options, const std::string& key, const std::string& va
         options.dxgi_output = std::stoi(value);
     } else if (key == "dxgi_timeout_ms" || key == "dxgi_timeout") {
         options.dxgi_timeout_ms = std::stoi(value);
+    } else if (key == "dxgi_gpu_preference") {
+        options.dxgi_gpu_preference = parse_dxgi_gpu_preference(value);
+    } else if (key == "dxgi_debug") {
+        options.dxgi_debug = parse_bool(value);
     } else if (key == "dxgi_roi_x") {
         options.dxgi_roi.x = std::stoi(value);
     } else if (key == "dxgi_roi_y") {

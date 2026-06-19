@@ -37,6 +37,12 @@ enum class InputSource {
     Dxgi,
 };
 
+enum class DxgiGpuPreference {
+    Default,
+    MinimumPower,
+    HighPerformance,
+};
+
 struct RuntimeTuningConfig {
     float body_head_anchor_ratio = 0.18F;
     float kalman_process_noise = 0.08F;
@@ -53,8 +59,11 @@ struct Options {
     int dxgi_adapter = 0;
     int dxgi_output = 0;
     int dxgi_timeout_ms = 16;
+    DxgiGpuPreference dxgi_gpu_preference = DxgiGpuPreference::Default;
     cv::Rect dxgi_roi;
+    bool dxgi_debug = false;
     bool list_dxgi_outputs = false;
+    bool probe_dxgi_outputs = false;
     bool verify_input = false;
     std::string hid_port;
     float hid_move_gain = 1.0F;
@@ -161,6 +170,8 @@ struct FrameReport {
 [[nodiscard]] std::string player_side_name(PlayerSide side);
 [[nodiscard]] InputSource parse_input_source(const std::string& value);
 [[nodiscard]] std::string input_source_name(InputSource source);
+[[nodiscard]] DxgiGpuPreference parse_dxgi_gpu_preference(const std::string& value);
+[[nodiscard]] std::string dxgi_gpu_preference_name(DxgiGpuPreference preference);
 void validate_model_class_schema(int output_dimensions);
 
 }  // namespace vision_analyzer

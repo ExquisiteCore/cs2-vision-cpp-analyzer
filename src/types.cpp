@@ -122,6 +122,31 @@ std::string input_source_name(InputSource source) {
     throw std::runtime_error("unknown input source");
 }
 
+DxgiGpuPreference parse_dxgi_gpu_preference(const std::string& value) {
+    if (value == "default") {
+        return DxgiGpuPreference::Default;
+    }
+    if (value == "minimum-power" || value == "integrated") {
+        return DxgiGpuPreference::MinimumPower;
+    }
+    if (value == "high-performance" || value == "discrete") {
+        return DxgiGpuPreference::HighPerformance;
+    }
+    throw std::runtime_error("unknown DXGI GPU preference: " + value);
+}
+
+std::string dxgi_gpu_preference_name(DxgiGpuPreference preference) {
+    switch (preference) {
+    case DxgiGpuPreference::Default:
+        return "default";
+    case DxgiGpuPreference::MinimumPower:
+        return "minimum-power";
+    case DxgiGpuPreference::HighPerformance:
+        return "high-performance";
+    }
+    throw std::runtime_error("unknown DXGI GPU preference");
+}
+
 void validate_model_class_schema(int output_dimensions) {
     const int expected = 4 + static_cast<int>(class_names().size());
     if (output_dimensions != expected) {
