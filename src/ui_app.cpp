@@ -506,19 +506,21 @@ void segmented(eui::Ui& ui,
 }
 
 void composeHeader(eui::Ui& ui, float x, float y, float width) {
-    label(ui, "header.title", x, y, 420.0f, 38.0f, "CS2 视觉运行控制台", 24.0f, kText);
-    label(ui, "header.sub", x, y + 32.0f, 620.0f, 22.0f, "统一管理模型、DXGI 输入、HID 标定、干跑预览和实机运行。", 12.0f, kMuted);
+    const float statusW = 156.0f;
+    const float titleW = std::max(220.0f, width - statusW - 18.0f);
+    label(ui, "header.title", x, y, titleW, 38.0f, "CS2 视觉运行控制台", 24.0f, kText);
+    label(ui, "header.sub", x, y + 32.0f, titleW, 22.0f, "统一管理模型、DXGI 输入、HID 标定、干跑预览和实机运行。", 12.0f, kMuted);
 
     const bool running = processRunning.load();
     ui.rect("header.status.bg")
-        .x(x + width - 156.0f)
+        .x(x + width - statusW)
         .y(y + 8.0f)
-        .size(156.0f, 34.0f)
+        .size(statusW, 34.0f)
         .color(running ? alpha(kAmber, 0.14f) : alpha(kAccent, 0.13f))
         .radius(8.0f)
         .border(1.0f, running ? alpha(kAmber, 0.42f) : alpha(kAccent, 0.42f))
         .build();
-    label(ui, "header.status", x + width - 156.0f, y + 8.0f, 156.0f, 34.0f, running ? "运行中" : "空闲", 13.0f, running ? kAmber : kAccent, eui::HorizontalAlign::Center);
+    label(ui, "header.status", x + width - statusW, y + 8.0f, statusW, 34.0f, running ? "运行中" : "空闲", 13.0f, running ? kAmber : kAccent, eui::HorizontalAlign::Center);
 }
 
 void composeConfig(eui::Ui& ui, float x, float y, float width, float height) {
@@ -662,22 +664,28 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         .color(kBg)
         .build();
 
-    const float margin = 22.0f;
-    const float width = std::max(1040.0f, screen.width - margin * 2.0f);
-    const float height = std::max(700.0f, screen.height - margin * 2.0f);
-    const float x = (screen.width - width) * 0.5f;
+    const float margin = std::clamp(screen.width * 0.020f, 10.0f, 22.0f);
+    const float width = std::max(320.0f, screen.width - margin * 2.0f);
+    const float height = std::max(360.0f, screen.height - margin * 2.0f);
+    const float x = margin;
     const float y = margin;
-    const float gap = 14.0f;
+    const float gap = std::clamp(width * 0.014f, 8.0f, 14.0f);
     const float contentY = y + 72.0f;
-    const float contentH = height - 72.0f;
-    const float leftW = std::clamp(width * 0.60f, 620.0f, 740.0f);
-    const float rightW = width - leftW - gap;
-    const float configH = std::clamp(contentH * 0.67f, 430.0f, 450.0f);
+    const float contentH = std::max(240.0f, height - 72.0f);
+    float rightW = std::clamp(width * 0.38f, 320.0f, 440.0f);
+    float leftW = width - rightW - gap;
+    if (leftW < 360.0f) {
+        leftW = std::max(300.0f, width - gap - 320.0f);
+        rightW = std::max(280.0f, width - leftW - gap);
+    }
+    const float configLimit = std::max(250.0f, contentH - 150.0f - gap);
+    const float configH = std::min(std::clamp(contentH * 0.67f, 360.0f, 450.0f), configLimit);
     const float logY = contentY + configH + gap;
-    const float logH = std::max(160.0f, contentY + contentH - logY);
-    const float tuningH = std::clamp(contentH * 0.67f, 430.0f, 460.0f);
+    const float logH = std::max(120.0f, contentY + contentH - logY);
+    const float tuningLimit = std::max(250.0f, contentH - 150.0f - gap);
+    const float tuningH = std::min(std::clamp(contentH * 0.68f, 360.0f, 460.0f), tuningLimit);
     const float actionsY = contentY + tuningH + gap;
-    const float actionsH = std::max(150.0f, contentY + contentH - actionsY);
+    const float actionsH = std::max(120.0f, contentY + contentH - actionsY);
 
     composeHeader(ui, x, y, width);
     composeConfig(ui, x, contentY, leftW, configH);
