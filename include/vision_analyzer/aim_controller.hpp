@@ -17,6 +17,7 @@ struct AimCommand {
 struct AimControllerOptions {
     float move_gain = 1.0F;
     int max_step = 120;
+    float deadzone_px = 1.5F;
     bool click_enabled = false;
     int click_cooldown_frames = 6;
 };

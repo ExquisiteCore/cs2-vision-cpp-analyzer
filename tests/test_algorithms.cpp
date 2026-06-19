@@ -1,5 +1,7 @@
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <utility>
@@ -7,7 +9,9 @@
 
 #include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/hid_output.hpp"
+#include "vision_analyzer/model_schema.hpp"
 #include "vision_analyzer/postprocess.hpp"
+#include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/tracking.hpp"
 
 using namespace vision_analyzer;
@@ -70,6 +74,35 @@ void test_model_class_schema_rejects_wrong_output_dimensions() {
         rejected = true;
     }
     require(rejected, "model class schema should reject COCO-style output dimensions");
+}
+
+void test_model_schema_file_validates_class_order() {
+    const auto path = std::filesystem::temp_directory_path() / "vision_analyzer_schema_ok.json";
+    {
+        std::ofstream output(path);
+        output << R"({"classes":["ct_body","ct_head","t_body","t_head"]})";
+    }
+
+    const ModelSchema schema = load_model_schema(path.string());
+    validate_model_schema(schema);
+    std::filesystem::remove(path);
+}
+
+void test_model_schema_file_rejects_wrong_class_order() {
+    const auto path = std::filesystem::temp_directory_path() / "vision_analyzer_schema_bad.json";
+    {
+        std::ofstream output(path);
+        output << R"({"classes":["ct_body","t_head","t_body","ct_head"]})";
+    }
+
+    bool rejected = false;
+    try {
+        validate_model_schema(load_model_schema(path.string()));
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    std::filesystem::remove(path);
+    require(rejected, "model schema should reject wrong class order");
 }
 
 void test_decode_yolo_output_accepts_channels_last_shape() {
@@ -198,6 +231,19 @@ void test_track_manager_smooths_velocity_spikes() {
     require(tracks[0].velocity.x < 60.0F, "smoothed velocity should damp sudden spikes");
 }
 
+void test_target_anchor_point_uses_body_top_fallback() {
+    const Detection body{0, "ct_body", 0.95F, cv::Rect(900, 500, 60, 180)};
+    const Detection head{1, "ct_head", 0.95F, cv::Rect(916, 494, 28, 28)};
+
+    const cv::Point2f body_anchor = target_anchor_point(body, 0.20F);
+    const cv::Point2f head_anchor = target_anchor_point(head, 0.20F);
+
+    require_near(body_anchor.x, 930.0F, 0.01F, "body anchor should use horizontal center");
+    require_near(body_anchor.y, 536.0F, 0.01F, "body anchor should use configured top-body ratio");
+    require_near(head_anchor.x, 930.0F, 0.01F, "head anchor should use head center x");
+    require_near(head_anchor.y, 508.0F, 0.01F, "head anchor should use head center y");
+}
+
 void test_analysis_state_predicts_latency_in_frame_units() {
     AnalysisState state;
     const cv::Size frame_size(1920, 1080);
@@ -308,6 +354,32 @@ void test_analysis_state_never_fires_for_body_class() {
     require(!report.fire_candidate, "body class should never become a fire candidate");
 }
 
+void test_analysis_state_aims_body_detection_at_head_anchor() {
+    RuntimeTuningConfig tuning;
+    tuning.body_head_anchor_ratio = 0.20F;
+    AnalysisState state(tuning);
+    const cv::Size frame_size(1920, 1080);
+    const TrackedDetection selected{
+        4,
+        Detection{0, "ct_body", 0.95F, cv::Rect(930, 450, 60, 180)},
+        {960.0F, 540.0F},
+        {960.0F, 540.0F},
+        {0.0F, 0.0F},
+        10,
+        10,
+        0,
+        0.95F,
+        0.90F,
+    };
+
+    const TargetFrame report = state.update(selected, frame_size, 0.0, 0.0);
+
+    require_near(report.center.x, 960.0F, 0.01F, "body fallback anchor should keep x center");
+    require_near(report.center.y, 486.0F, 0.01F, "body fallback anchor should aim near body top, not body center");
+    require_near(report.offset.y, -54.0F, 0.01F, "body fallback offset should use head anchor");
+    require(!report.fire_candidate, "body fallback should still never fire");
+}
+
 void test_aim_controller_scales_and_clamps_target_offset() {
     AimControllerOptions options;
     options.move_gain = 0.5F;
@@ -345,6 +417,83 @@ void test_aim_controller_scales_and_clamps_target_offset() {
     require(command.dx == 12, "aim command should clamp scaled x movement");
     require(command.dy == -5, "aim command should scale y movement");
     require(!command.click_left, "aim command should not click when clicks are disabled");
+}
+
+void test_aim_controller_deadzone_suppresses_tiny_steps() {
+    AimControllerOptions options;
+    options.move_gain = 1.0F;
+    options.max_step = 20;
+    options.deadzone_px = 3.0F;
+    AimController controller(options);
+
+    FrameReport report{
+        42,
+        1400.0,
+        120.0,
+        InferenceTiming{},
+        1,
+        TargetFrame{
+            9,
+            Detection{1, "ct_head", 0.91F, cv::Rect(950, 520, 40, 40)},
+            {970.0F, 540.0F},
+            {978.0F, 542.0F},
+            {2.9F, -3.1F},
+            4.25F,
+            false,
+            {962.9F, 536.9F},
+            {0.0F, 0.0F},
+            {0.0F, 0.0F},
+            0.82F,
+            0.0F,
+            LockState::Tracking,
+            false,
+        },
+    };
+
+    const AimCommand command = controller.plan(report);
+
+    require(command.dx == 0, "deadzone should suppress tiny x movement");
+    require(command.dy == -3, "deadzone should keep movement outside threshold");
+}
+
+void test_runtime_config_file_overrides_tuning_and_io() {
+    const auto path = std::filesystem::temp_directory_path() / "vision_analyzer_runtime.cfg";
+    {
+        std::ofstream output(path);
+        output << "input=dxgi\n"
+               << "dxgi_adapter=1\n"
+               << "dxgi_output=2\n"
+               << "dxgi_roi_x=100\n"
+               << "dxgi_roi_y=50\n"
+               << "dxgi_roi_width=800\n"
+               << "dxgi_roi_height=600\n"
+               << "hid_gain=0.5\n"
+               << "hid_deadzone_px=2.5\n"
+               << "body_head_anchor_ratio=0.22\n"
+               << "kalman_process_noise=0.11\n"
+               << "kalman_measurement_noise=5.5\n"
+               << "kalman_error_covariance=7.5\n"
+               << "action_log=actions.txt\n";
+    }
+
+    Options options;
+    apply_runtime_config_file(options, path.string());
+    std::filesystem::remove(path);
+
+    require(options.input_source == InputSource::Dxgi, "config should set DXGI input");
+    require(options.dxgi_adapter == 1 && options.dxgi_output == 2, "config should set DXGI adapter/output");
+    require(
+        options.dxgi_roi.x == 100 && options.dxgi_roi.y == 50 &&
+        options.dxgi_roi.width == 800 && options.dxgi_roi.height == 600,
+        "config should set DXGI ROI"
+    );
+    require_near(options.hid_move_gain, 0.5F, 0.001F, "config should set HID gain");
+    require_near(options.hid_deadzone_px, 2.5F, 0.001F, "config should set HID deadzone");
+    require_near(options.tuning.body_head_anchor_ratio, 0.22F, 0.001F, "config should set body anchor ratio");
+    require_near(options.tuning.kalman_process_noise, 0.11F, 0.001F, "config should set process noise");
+    require_near(options.tuning.kalman_measurement_noise, 5.5F, 0.001F, "config should set measurement noise");
+    require_near(options.tuning.kalman_error_covariance, 7.5F, 0.001F, "config should set error covariance");
+    require(options.action_log_path == "actions.txt", "config should set action log path");
 }
 
 void test_aim_controller_holds_when_no_target() {
@@ -442,18 +591,24 @@ int main() {
         test_class_aware_nms_keeps_overlapping_different_classes();
         test_enemy_filter_keeps_opposing_side_only();
         test_model_class_schema_rejects_wrong_output_dimensions();
+        test_model_schema_file_validates_class_order();
+        test_model_schema_file_rejects_wrong_class_order();
         test_decode_yolo_output_accepts_channels_last_shape();
         test_input_source_parser_accepts_video_and_dxgi();
         test_track_manager_keeps_id_for_small_motion();
         test_target_selector_prefers_active_track_when_scores_are_close();
         test_target_selector_switches_when_challenger_is_clearly_better();
         test_track_manager_smooths_velocity_spikes();
+        test_target_anchor_point_uses_body_top_fallback();
         test_analysis_state_predicts_latency_in_frame_units();
         test_analysis_state_offsets_from_filtered_analysis_point();
         test_motion_filter_is_stable_and_moves_toward_measurement();
         test_motion_filter_predicts_with_kalman_velocity();
         test_analysis_state_never_fires_for_body_class();
+        test_analysis_state_aims_body_detection_at_head_anchor();
         test_aim_controller_scales_and_clamps_target_offset();
+        test_aim_controller_deadzone_suppresses_tiny_steps();
+        test_runtime_config_file_overrides_tuning_and_io();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
         test_hid_action_sender_executes_aim_command();

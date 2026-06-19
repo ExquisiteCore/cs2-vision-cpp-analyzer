@@ -22,6 +22,9 @@ local has_ort = ort_root ~= "" and os.isdir(ort_include) and os.isdir(ort_lib)
 local torch_lib = path.join(os.projectdir(), "../../.venv/Lib/site-packages/torch/lib")
 local tensorrt_libs = path.join(os.projectdir(), "../../.venv/Lib/site-packages/tensorrt_libs")
 local hid_sdk_root = get_config("hid_sdk_root") or ""
+if hid_sdk_root == "" then
+    hid_sdk_root = path.join(os.projectdir(), "../rp2350_hid_bridge_cpp")
+end
 local hid_sdk_include = path.join(hid_sdk_root, "include")
 local has_hid_sdk = hid_sdk_root ~= "" and os.isdir(hid_sdk_include)
 
@@ -55,7 +58,15 @@ target("vision_analyzer_tests")
     set_kind("binary")
     add_includedirs("include")
     add_files("tests/test_algorithms.cpp")
-    add_files("src/types.cpp", "src/postprocess.cpp", "src/tracking.cpp", "src/hid_output.cpp", "src/aim_controller.cpp")
+    add_files(
+        "src/types.cpp",
+        "src/postprocess.cpp",
+        "src/tracking.cpp",
+        "src/hid_output.cpp",
+        "src/aim_controller.cpp",
+        "src/runtime_config.cpp",
+        "src/model_schema.cpp"
+    )
     add_packages("opencv")
     if is_plat("windows") then
         add_cxflags("/utf-8")

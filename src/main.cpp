@@ -1,6 +1,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <exception>
+#include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -15,9 +17,12 @@
 #include <opencv2/videoio.hpp>
 
 #include "vision_analyzer/aim_controller.hpp"
+#include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/detector.hpp"
 #include "vision_analyzer/frame_source.hpp"
 #include "vision_analyzer/hid_output.hpp"
+#include "vision_analyzer/model_schema.hpp"
+#include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/tracking.hpp"
 
 namespace vision_analyzer {
@@ -27,6 +32,16 @@ namespace {
     Options options;
     for (int i = 1; i < argc; ++i) {
         const std::string key = argv[i];
+        if (key == "--config") {
+            if (i + 1 >= argc) {
+                throw std::runtime_error("missing value for --config");
+            }
+            apply_runtime_config_file(options, argv[++i]);
+        }
+    }
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string key = argv[i];
         const auto require_value = [&](const std::string& name) -> std::string {
             if (i + 1 >= argc) {
                 throw std::runtime_error("missing value for " + name);
@@ -34,8 +49,12 @@ namespace {
             return argv[++i];
         };
 
-        if (key == "--model") {
+        if (key == "--config") {
+            options.config_path = require_value(key);
+        } else if (key == "--model") {
             options.model_path = require_value(key);
+        } else if (key == "--schema") {
+            options.model_schema_path = require_value(key);
         } else if (key == "--video") {
             options.video_path = require_value(key);
             options.input_source = InputSource::Video;
@@ -47,20 +66,53 @@ namespace {
             options.dxgi_output = std::stoi(require_value(key));
         } else if (key == "--dxgi-timeout") {
             options.dxgi_timeout_ms = std::stoi(require_value(key));
+        } else if (key == "--dxgi-roi") {
+            options.dxgi_roi.x = std::stoi(require_value(key));
+            options.dxgi_roi.y = std::stoi(require_value(key));
+            options.dxgi_roi.width = std::stoi(require_value(key));
+            options.dxgi_roi.height = std::stoi(require_value(key));
+        } else if (key == "--list-dxgi-outputs") {
+            options.list_dxgi_outputs = true;
+            options.input_source = InputSource::Dxgi;
+        } else if (key == "--verify-input") {
+            options.verify_input = true;
         } else if (key == "--hid-port") {
             options.hid_port = require_value(key);
         } else if (key == "--hid-gain") {
             options.hid_move_gain = std::stof(require_value(key));
         } else if (key == "--hid-max-step") {
             options.hid_max_step = std::stoi(require_value(key));
+        } else if (key == "--hid-deadzone") {
+            options.hid_deadzone_px = std::stof(require_value(key));
         } else if (key == "--hid-click") {
             options.hid_click_enabled = true;
         } else if (key == "--hid-click-cooldown") {
             options.hid_click_cooldown_frames = std::stoi(require_value(key));
+        } else if (key == "--calibrate-hid") {
+            options.calibrate_hid = true;
+            options.input_source = InputSource::Dxgi;
+        } else if (key == "--calibration-step") {
+            options.calibration_step_counts = std::stoi(require_value(key));
+        } else if (key == "--calibration-repeats") {
+            options.calibration_repeats = std::stoi(require_value(key));
+        } else if (key == "--calibration-settle") {
+            options.calibration_settle_ms = std::stoi(require_value(key));
+        } else if (key == "--calibration-output") {
+            options.calibration_output_path = require_value(key);
+        } else if (key == "--action-log") {
+            options.action_log_path = require_value(key);
         } else if (key == "--player-side") {
             options.player_side = parse_player_side(require_value(key));
         } else if (key == "--backend") {
             options.backend = parse_backend(require_value(key));
+        } else if (key == "--body-head-anchor-ratio") {
+            options.tuning.body_head_anchor_ratio = std::stof(require_value(key));
+        } else if (key == "--kalman-process-noise") {
+            options.tuning.kalman_process_noise = std::stof(require_value(key));
+        } else if (key == "--kalman-measurement-noise") {
+            options.tuning.kalman_measurement_noise = std::stof(require_value(key));
+        } else if (key == "--kalman-error-covariance") {
+            options.tuning.kalman_error_covariance = std::stof(require_value(key));
         } else if (key == "--conf") {
             options.confidence = std::stof(require_value(key));
         } else if (key == "--nms") {
@@ -82,17 +134,26 @@ namespace {
         } else if (key == "--help" || key == "-h") {
             std::cout
                 << "vision_analyzer --backend opencv-onnx --model best.onnx (--video input.mp4 | --input dxgi) (--hid-port COMx | --dry-run) [--preview]\n"
+                << "  --config PATH    load key=value runtime config before CLI overrides\n"
                 << "  --backend NAME    opencv-onnx, opencv-cuda, ort-cuda, ort-tensorrt, or tensorrt\n"
+                << "  --schema PATH     validate exported model class schema JSON\n"
                 << "  --input NAME      video or dxgi; --video also selects video input\n"
                 << "  --video PATH      video file for offline tuning\n"
+                << "  --list-dxgi-outputs  print DXGI adapters/outputs and exit\n"
+                << "  --verify-input    capture one frame, print dimensions/mean, and exit\n"
                 << "  --dxgi-adapter N  DXGI adapter index for desktop duplication, default 0\n"
                 << "  --dxgi-output N   DXGI output/monitor index for desktop duplication, default 0\n"
                 << "  --dxgi-timeout N  DXGI frame wait timeout in ms, default 16\n"
+                << "  --dxgi-roi X Y W H  crop live DXGI input to this ROI before inference\n"
                 << "  --hid-port COMx   send relative mouse moves through the RP2350 HID bridge SDK\n"
                 << "  --hid-gain 1.0    multiply target offset before sending relative mouse movement\n"
                 << "  --hid-max-step N  clamp each relative mouse move axis to +/-N, default 120\n"
+                << "  --hid-deadzone PX suppress tiny per-axis movements below this offset, default 1.5\n"
                 << "  --hid-click       send left click when fire_candidate is true\n"
                 << "  --hid-click-cooldown N  minimum frame cooldown between SDK left clicks, default 6\n"
+                << "  --calibrate-hid   run controlled HID moves, estimate DXGI visual shift, and exit\n"
+                << "  --calibration-output PATH  write HID calibration samples to a text file\n"
+                << "  --action-log PATH write per-frame planned movement/click commands to a text file\n"
                 << "  --player-side SIDE  unknown, ct, or t; ct targets T classes, t targets CT classes\n"
                 << "  --dry-run         run detection and planning without SDK output\n"
                 << "  --status-every N  print one status line every N processed frames, default 30\n"
@@ -111,6 +172,53 @@ namespace {
 }
 
 void validate_options(const Options& options) {
+    if (options.dxgi_adapter < 0 || options.dxgi_output < 0) {
+        throw std::runtime_error("--dxgi-adapter and --dxgi-output must be greater than or equal to 0");
+    }
+    if (options.dxgi_timeout_ms <= 0) {
+        throw std::runtime_error("--dxgi-timeout must be greater than 0");
+    }
+    if (options.dxgi_roi.x < 0 || options.dxgi_roi.y < 0 ||
+        options.dxgi_roi.width < 0 || options.dxgi_roi.height < 0) {
+        throw std::runtime_error("--dxgi-roi values must be greater than or equal to 0");
+    }
+    if ((options.dxgi_roi.width == 0) != (options.dxgi_roi.height == 0)) {
+        throw std::runtime_error("--dxgi-roi width and height must either both be set or both be 0");
+    }
+    if (!std::isfinite(options.hid_move_gain)) {
+        throw std::runtime_error("--hid-gain must be finite");
+    }
+    if (options.hid_max_step < 0) {
+        throw std::runtime_error("--hid-max-step must be greater than or equal to 0");
+    }
+    if (!std::isfinite(options.hid_deadzone_px) || options.hid_deadzone_px < 0.0F) {
+        throw std::runtime_error("--hid-deadzone must be finite and greater than or equal to 0");
+    }
+    if (!std::isfinite(options.tuning.body_head_anchor_ratio) ||
+        options.tuning.body_head_anchor_ratio <= 0.0F ||
+        options.tuning.body_head_anchor_ratio >= 0.5F) {
+        throw std::runtime_error("--body-head-anchor-ratio must be finite and between 0 and 0.5");
+    }
+    if (!std::isfinite(options.tuning.kalman_process_noise) || options.tuning.kalman_process_noise <= 0.0F ||
+        !std::isfinite(options.tuning.kalman_measurement_noise) || options.tuning.kalman_measurement_noise <= 0.0F ||
+        !std::isfinite(options.tuning.kalman_error_covariance) || options.tuning.kalman_error_covariance <= 0.0F) {
+        throw std::runtime_error("Kalman tuning values must be finite and greater than 0");
+    }
+    if (options.list_dxgi_outputs || options.verify_input) {
+        return;
+    }
+    if (options.calibrate_hid) {
+        if (options.input_source != InputSource::Dxgi) {
+            throw std::runtime_error("--calibrate-hid requires DXGI input");
+        }
+        if (options.hid_port.empty()) {
+            throw std::runtime_error("--calibrate-hid requires --hid-port COMx");
+        }
+        if (options.calibration_step_counts <= 0 || options.calibration_repeats <= 0 || options.calibration_settle_ms < 0) {
+            throw std::runtime_error("calibration step/repeats must be greater than 0 and settle must be non-negative");
+        }
+        return;
+    }
     if (options.hid_port.empty() && !options.dry_run) {
         throw std::runtime_error("use --hid-port COMx for live SDK output or --dry-run for tuning");
     }
@@ -120,12 +228,24 @@ void validate_options(const Options& options) {
     if (options.status_every_frames <= 0) {
         throw std::runtime_error("--status-every must be greater than 0");
     }
-    if (options.dxgi_adapter < 0 || options.dxgi_output < 0) {
-        throw std::runtime_error("--dxgi-adapter and --dxgi-output must be greater than or equal to 0");
+}
+
+void verify_input(const Options& options) {
+    auto frame_source = create_frame_source(options);
+    CapturedFrame frame;
+    if (!frame_source->read(frame)) {
+        throw std::runtime_error("failed to read input frame");
     }
-    if (options.dxgi_timeout_ms <= 0) {
-        throw std::runtime_error("--dxgi-timeout must be greater than 0");
-    }
+    const cv::Scalar mean = cv::mean(frame.image);
+    std::cout << "input_verify"
+              << " source=" << frame_source->name()
+              << " width=" << frame.image.cols
+              << " height=" << frame.image.rows
+              << " mean_b=" << mean[0]
+              << " mean_g=" << mean[1]
+              << " mean_r=" << mean[2]
+              << '\n';
+    frame_source->release();
 }
 
 [[nodiscard]] cv::Scalar class_color(int class_id) {
@@ -175,7 +295,21 @@ void draw_overlay(cv::Mat& frame, const std::vector<Detection>& detections, cons
 }
 
 void run(const Options& options) {
+    if (options.list_dxgi_outputs) {
+        print_dxgi_outputs(std::cout);
+        return;
+    }
+    if (options.verify_input) {
+        verify_input(options);
+        return;
+    }
+    if (options.calibrate_hid) {
+        run_hid_calibration(options);
+        return;
+    }
+
     auto frame_source = create_frame_source(options);
+    validate_configured_model_schema(options);
 
     auto detector = create_detector(options.backend, options.model_path);
     if (options.warmup_frames > 0) {
@@ -189,9 +323,18 @@ void run(const Options& options) {
     AimController aim_controller(AimControllerOptions{
         options.hid_move_gain,
         options.hid_max_step,
+        options.hid_deadzone_px,
         options.hid_click_enabled,
         options.hid_click_cooldown_frames,
     });
+    std::ofstream action_log;
+    if (!options.action_log_path.empty()) {
+        action_log.open(options.action_log_path);
+        if (!action_log) {
+            throw std::runtime_error("failed to open action log: " + options.action_log_path);
+        }
+        action_log << "frame timestamp_ms target dx dy click lock distance offset_x offset_y\n";
+    }
     std::unique_ptr<HidClient> hid_client;
     std::unique_ptr<HidActionSender> hid_sender;
     if (!options.dry_run) {
@@ -200,19 +343,21 @@ void run(const Options& options) {
         std::cout << "hid_port=" << options.hid_port
                   << " hid_gain=" << options.hid_move_gain
                   << " hid_max_step=" << options.hid_max_step
+                  << " hid_deadzone=" << options.hid_deadzone_px
                   << " hid_click=" << (options.hid_click_enabled ? 1 : 0)
                   << " player_side=" << player_side_name(options.player_side) << '\n';
     } else {
         std::cout << "dry_run=1"
                   << " hid_gain=" << options.hid_move_gain
                   << " hid_max_step=" << options.hid_max_step
+                  << " hid_deadzone=" << options.hid_deadzone_px
                   << " hid_click=" << (options.hid_click_enabled ? 1 : 0)
                   << " player_side=" << player_side_name(options.player_side) << '\n';
     }
 
     TrackManager track_manager;
-    TargetSelector selector;
-    AnalysisState analysis_state;
+    TargetSelector selector(options.tuning);
+    AnalysisState analysis_state(options.tuning);
     cv::Mat frame;
     int processed_index = 0;
     auto last_time = std::chrono::steady_clock::now();
@@ -259,6 +404,23 @@ void run(const Options& options) {
         const AimCommand command = aim_controller.plan(report);
         if (hid_sender) {
             hid_sender->execute(command);
+        }
+        if (action_log) {
+            action_log << report.frame_index << ' '
+                       << report.timestamp_ms << ' '
+                       << (command.has_target ? 1 : 0) << ' '
+                       << command.dx << ' '
+                       << command.dy << ' '
+                       << (command.click_left ? 1 : 0) << ' '
+                       << lock_state_name(command.lock_state) << ' ';
+            if (report.target.has_value()) {
+                action_log << report.target->distance << ' '
+                           << report.target->offset.x << ' '
+                           << report.target->offset.y;
+            } else {
+                action_log << "0 0 0";
+            }
+            action_log << '\n';
         }
         if (processed_index % options.status_every_frames == 0) {
             std::cout << "frame=" << report.frame_index

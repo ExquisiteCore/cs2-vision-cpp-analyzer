@@ -1,7 +1,10 @@
 #include "vision_analyzer/frame_source.hpp"
 
 #include <chrono>
+#include <iomanip>
 #include <iterator>
+#include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -14,6 +17,7 @@
 #endif
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <windows.h>
 #include <wrl/client.h>
 #endif
 
@@ -73,8 +77,21 @@ private:
 template <typename T>
 void throw_if_failed(T result, const char* message) {
     if (FAILED(result)) {
-        throw std::runtime_error(message);
+        std::ostringstream stream;
+        stream << message << " hresult=0x"
+               << std::hex << std::uppercase << static_cast<unsigned long>(static_cast<HRESULT>(result));
+        throw std::runtime_error(stream.str());
     }
+}
+
+[[nodiscard]] std::string narrow_utf8(const wchar_t* value) {
+    const int required = WideCharToMultiByte(CP_UTF8, 0, value, -1, nullptr, 0, nullptr, nullptr);
+    if (required <= 1) {
+        return {};
+    }
+    std::string result(static_cast<std::size_t>(required - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value, -1, result.data(), required, nullptr, nullptr);
+    return result;
 }
 
 class DxgiFrameSource final : public FrameSource {
@@ -83,6 +100,7 @@ public:
         : adapter_index_(options.dxgi_adapter),
           output_index_(options.dxgi_output),
           timeout_ms_(options.dxgi_timeout_ms),
+          roi_(options.dxgi_roi),
           start_time_ms_(now_ms()) {
         initialize();
     }
@@ -126,6 +144,9 @@ public:
     }
 
     std::string name() const override {
+        if (roi_.width > 0 && roi_.height > 0) {
+            return "dxgi-roi";
+        }
         return "dxgi";
     }
 
@@ -215,6 +236,15 @@ private:
         cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
         context_->Unmap(staging_texture_.Get(), 0);
 
+        if (roi_.width > 0 && roi_.height > 0) {
+            const cv::Rect frame_rect(0, 0, bgr.cols, bgr.rows);
+            const cv::Rect clipped = roi_ & frame_rect;
+            if (clipped.width <= 0 || clipped.height <= 0) {
+                throw std::runtime_error("DXGI ROI is outside the captured frame");
+            }
+            bgr = bgr(clipped).clone();
+        }
+
         frame = CapturedFrame{
             std::move(bgr),
             frame_index_++,
@@ -225,6 +255,7 @@ private:
     int adapter_index_ = 0;
     int output_index_ = 0;
     int timeout_ms_ = 16;
+    cv::Rect roi_;
     int frame_index_ = 0;
     double start_time_ms_ = 0.0;
     Microsoft::WRL::ComPtr<ID3D11Device> device_;
@@ -259,6 +290,44 @@ public:
 #endif
 
 }  // namespace
+
+void print_dxgi_outputs(std::ostream& output) {
+#if defined(_WIN32)
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    throw_if_failed(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "CreateDXGIFactory1 failed");
+
+    for (UINT adapter_index = 0;; ++adapter_index) {
+        Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(adapter_index, &adapter) == DXGI_ERROR_NOT_FOUND) {
+            break;
+        }
+        DXGI_ADAPTER_DESC1 adapter_desc{};
+        adapter->GetDesc1(&adapter_desc);
+
+        for (UINT output_index = 0;; ++output_index) {
+            Microsoft::WRL::ComPtr<IDXGIOutput> dxgi_output;
+            if (adapter->EnumOutputs(output_index, &dxgi_output) == DXGI_ERROR_NOT_FOUND) {
+                break;
+            }
+            DXGI_OUTPUT_DESC output_desc{};
+            dxgi_output->GetDesc(&output_desc);
+            const RECT& rect = output_desc.DesktopCoordinates;
+            output << "adapter=" << adapter_index
+                   << " output=" << output_index
+                   << " adapter_name=\"" << narrow_utf8(adapter_desc.Description) << "\""
+                   << " output_name=\"" << narrow_utf8(output_desc.DeviceName) << "\""
+                   << " desktop_left=" << rect.left
+                   << " desktop_top=" << rect.top
+                   << " desktop_right=" << rect.right
+                   << " desktop_bottom=" << rect.bottom
+                   << " attached=" << (output_desc.AttachedToDesktop ? 1 : 0)
+                   << '\n';
+        }
+    }
+#else
+    output << "DXGI output enumeration is only available on Windows\n";
+#endif
+}
 
 std::unique_ptr<FrameSource> create_frame_source(const Options& options) {
     switch (options.input_source) {

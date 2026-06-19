@@ -8,7 +8,10 @@
 namespace vision_analyzer {
 namespace {
 
-[[nodiscard]] std::int16_t scaled_step(float value, float gain, int max_step) {
+[[nodiscard]] std::int16_t scaled_step(float value, float gain, int max_step, float deadzone_px) {
+    if (std::abs(value) < deadzone_px) {
+        return 0;
+    }
     const int limited_max = std::clamp(max_step, 0, static_cast<int>(std::numeric_limits<std::int16_t>::max()));
     const int rounded = static_cast<int>(std::lround(value * gain));
     return static_cast<std::int16_t>(std::clamp(rounded, -limited_max, limited_max));
@@ -20,6 +23,9 @@ void validate_options(const AimControllerOptions& options) {
     }
     if (options.max_step < 0) {
         throw std::runtime_error("aim max step must be greater than or equal to 0");
+    }
+    if (!std::isfinite(options.deadzone_px) || options.deadzone_px < 0.0F) {
+        throw std::runtime_error("aim deadzone must be finite and greater than or equal to 0");
     }
     if (options.click_cooldown_frames < 0) {
         throw std::runtime_error("aim click cooldown must be greater than or equal to 0");
@@ -46,8 +52,8 @@ AimCommand AimController::plan(const FrameReport& report) {
     const auto& target = *report.target;
     AimCommand command;
     command.has_target = true;
-    command.dx = scaled_step(target.offset.x, options_.move_gain, options_.max_step);
-    command.dy = scaled_step(target.offset.y, options_.move_gain, options_.max_step);
+    command.dx = scaled_step(target.offset.x, options_.move_gain, options_.max_step, options_.deadzone_px);
+    command.dy = scaled_step(target.offset.y, options_.move_gain, options_.max_step, options_.deadzone_px);
     command.lock_state = target.lock_state;
 
     if (options_.click_enabled && target.fire_candidate && click_available) {

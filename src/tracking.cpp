@@ -28,6 +28,15 @@ cv::Point2f box_center(const cv::Rect& box) {
     return {box.x + box.width / 2.0F, box.y + box.height / 2.0F};
 }
 
+cv::Point2f target_anchor_point(const Detection& detection, float body_head_anchor_ratio) {
+    const cv::Rect& box = detection.box;
+    const float clamped_ratio = std::clamp(body_head_anchor_ratio, 0.05F, 0.45F);
+    if (is_body(detection.class_id)) {
+        return {box.x + box.width / 2.0F, box.y + box.height * clamped_ratio};
+    }
+    return box_center(box);
+}
+
 float intersection_over_union(const cv::Rect& left, const cv::Rect& right) {
     const int x1 = std::max(left.x, right.x);
     const int y1 = std::max(left.y, right.y);
@@ -163,13 +172,19 @@ std::vector<TrackedDetection> TrackManager::update(const std::vector<Detection>&
     return visible;
 }
 
+TargetSelector::TargetSelector(RuntimeTuningConfig tuning)
+    : tuning_(tuning) {}
+
 float TargetSelector::score(
     const TrackedDetection& track,
     const cv::Size& frame_size,
     std::optional<int> active_track_id
 ) const {
     const cv::Point2f frame_center(frame_size.width / 2.0F, frame_size.height / 2.0F);
-    const float distance = point_distance(track.predicted_center, frame_center);
+    const cv::Point2f anchor_delta =
+        target_anchor_point(track.detection, tuning_.body_head_anchor_ratio) - box_center(track.detection.box);
+    const cv::Point2f predicted_anchor = track.predicted_center + anchor_delta;
+    const float distance = point_distance(predicted_anchor, frame_center);
     const float normalized_distance = distance / std::max(1.0F, frame_diagonal(frame_size));
     const float class_bias = is_head(track.detection.class_id) ? 0.70F : 1.00F;
     const float confidence_factor = 1.0F / std::max(0.05F, track.confidence_ema);
@@ -234,10 +249,11 @@ void OneEuroFilter::reset() {
     previous_derivative_ = 0.0;
 }
 
-MotionFilter2D::MotionFilter2D()
-    : filter_(4, 2, 0, CV_32F) {
+MotionFilter2D::MotionFilter2D(RuntimeTuningConfig tuning)
+    : filter_(4, 2, 0, CV_32F),
+      tuning_(tuning) {
     configure_filter(1.0F / 60.0F);
-    cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(8.0F));
+    cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(tuning_.kalman_error_covariance));
 }
 
 cv::Point2f MotionFilter2D::update(const cv::Point2f& measurement, double timestamp_ms) {
@@ -252,7 +268,7 @@ cv::Point2f MotionFilter2D::update(const cv::Point2f& measurement, double timest
         filter_.statePost.at<float>(1) = measurement.y;
         filter_.statePost.at<float>(2) = 0.0F;
         filter_.statePost.at<float>(3) = 0.0F;
-        cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(8.0F));
+        cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(tuning_.kalman_error_covariance));
         previous_point_ = measurement;
         previous_timestamp_ms_ = timestamp_ms;
         velocity_ = {0.0F, 0.0F};
@@ -290,7 +306,7 @@ cv::Point2f MotionFilter2D::predict(double lookahead_ms) const {
 
 void MotionFilter2D::reset() {
     configure_filter(1.0F / 60.0F);
-    cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(8.0F));
+    cv::setIdentity(filter_.errorCovPost, cv::Scalar::all(tuning_.kalman_error_covariance));
     initialized_ = false;
     previous_timestamp_ms_ = 0.0;
     previous_point_ = {0.0F, 0.0F};
@@ -319,9 +335,13 @@ void MotionFilter2D::configure_filter(float dt_seconds) {
     filter_.measurementMatrix = cv::Mat::zeros(2, 4, CV_32F);
     filter_.measurementMatrix.at<float>(0, 0) = 1.0F;
     filter_.measurementMatrix.at<float>(1, 1) = 1.0F;
-    cv::setIdentity(filter_.processNoiseCov, cv::Scalar::all(0.08F));
-    cv::setIdentity(filter_.measurementNoiseCov, cv::Scalar::all(6.0F));
+    cv::setIdentity(filter_.processNoiseCov, cv::Scalar::all(tuning_.kalman_process_noise));
+    cv::setIdentity(filter_.measurementNoiseCov, cv::Scalar::all(tuning_.kalman_measurement_noise));
 }
+
+AnalysisState::AnalysisState(RuntimeTuningConfig tuning)
+    : tuning_(tuning),
+      filter_(tuning) {}
 
 TargetFrame AnalysisState::update(
     const TrackedDetection& selected,
@@ -347,7 +367,8 @@ TargetFrame AnalysisState::update(
     const float latency_frames = static_cast<float>(
         std::clamp(latency_ms / std::max(1.0, frame_interval_ema_ms_), 0.0, 2.0)
     );
-    const cv::Point2f predicted = selected.center + selected.velocity * latency_frames;
+    const cv::Point2f anchor = target_anchor_point(selected.detection, tuning_.body_head_anchor_ratio);
+    const cv::Point2f predicted = anchor + selected.velocity * latency_frames;
     (void)filter_.update(predicted, timestamp_ms);
     const cv::Point2f analysis_point = filter_.predict(latency_ms);
     const cv::Point2f offset = analysis_point - frame_center;
@@ -376,7 +397,7 @@ TargetFrame AnalysisState::update(
     return TargetFrame{
         selected.track_id,
         selected.detection,
-        selected.center,
+        anchor,
         predicted,
         offset,
         distance,

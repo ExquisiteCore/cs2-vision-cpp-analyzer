@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iosfwd>
 #include <memory>
 #include <string>
 
@@ -26,5 +27,6 @@ public:
 };
 
 [[nodiscard]] std::unique_ptr<FrameSource> create_frame_source(const Options& options);
+void print_dxgi_outputs(std::ostream& output);
 
 }  // namespace vision_analyzer

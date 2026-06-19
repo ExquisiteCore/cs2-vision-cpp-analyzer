@@ -10,6 +10,7 @@
 namespace vision_analyzer {
 
 [[nodiscard]] cv::Point2f box_center(const cv::Rect& box);
+[[nodiscard]] cv::Point2f target_anchor_point(const Detection& detection, float body_head_anchor_ratio = 0.18F);
 [[nodiscard]] float intersection_over_union(const cv::Rect& left, const cv::Rect& right);
 
 class TrackManager {
@@ -39,6 +40,8 @@ private:
 
 class TargetSelector {
 public:
+    explicit TargetSelector(RuntimeTuningConfig tuning = {});
+
     [[nodiscard]] std::optional<TrackedDetection> select(
         const std::vector<TrackedDetection>& tracks,
         const cv::Size& frame_size,
@@ -51,6 +54,8 @@ private:
         const cv::Size& frame_size,
         std::optional<int> active_track_id
     ) const;
+
+    RuntimeTuningConfig tuning_;
 };
 
 class OneEuroFilter {
@@ -74,7 +79,7 @@ private:
 
 class MotionFilter2D {
 public:
-    MotionFilter2D();
+    explicit MotionFilter2D(RuntimeTuningConfig tuning = {});
 
     [[nodiscard]] cv::Point2f update(const cv::Point2f& measurement, double timestamp_ms);
     [[nodiscard]] cv::Point2f predict(double lookahead_ms) const;
@@ -88,6 +93,7 @@ private:
     void configure_filter(float dt_seconds);
 
     cv::KalmanFilter filter_;
+    RuntimeTuningConfig tuning_;
     bool initialized_ = false;
     double previous_timestamp_ms_ = 0.0;
     cv::Point2f previous_point_;
@@ -97,6 +103,8 @@ private:
 
 class AnalysisState {
 public:
+    explicit AnalysisState(RuntimeTuningConfig tuning = {});
+
     [[nodiscard]] TargetFrame update(
         const TrackedDetection& selected,
         const cv::Size& frame_size,
@@ -109,6 +117,7 @@ public:
 
 private:
     std::optional<int> active_track_id_;
+    RuntimeTuningConfig tuning_;
     MotionFilter2D filter_;
     int locked_frames_ = 0;
     int missing_frames_ = 0;

@@ -37,24 +37,44 @@ enum class InputSource {
     Dxgi,
 };
 
+struct RuntimeTuningConfig {
+    float body_head_anchor_ratio = 0.18F;
+    float kalman_process_noise = 0.08F;
+    float kalman_measurement_noise = 6.0F;
+    float kalman_error_covariance = 8.0F;
+};
+
 struct Options {
     std::string model_path = "../../runs/detect/train/weights/best.onnx";
+    std::string model_schema_path;
     std::string video_path = "../../videos/02.mp4";
+    std::string config_path;
     InputSource input_source = InputSource::Video;
     int dxgi_adapter = 0;
     int dxgi_output = 0;
     int dxgi_timeout_ms = 16;
+    cv::Rect dxgi_roi;
+    bool list_dxgi_outputs = false;
+    bool verify_input = false;
     std::string hid_port;
     float hid_move_gain = 1.0F;
     int hid_max_step = 120;
+    float hid_deadzone_px = 1.5F;
     bool hid_click_enabled = false;
     int hid_click_cooldown_frames = 6;
+    bool calibrate_hid = false;
+    int calibration_step_counts = 40;
+    int calibration_repeats = 3;
+    int calibration_settle_ms = 120;
+    std::string calibration_output_path;
+    std::string action_log_path;
     PlayerSide player_side = PlayerSide::Unknown;
     bool dry_run = false;
     int status_every_frames = 30;
     Backend backend = Backend::OpenCvOnnx;
     float confidence = 0.25F;
     float nms_threshold = 0.45F;
+    RuntimeTuningConfig tuning;
     int max_frames = 0;
     int start_frame = 0;
     int warmup_frames = 3;

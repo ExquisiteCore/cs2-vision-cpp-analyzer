@@ -12,15 +12,16 @@ bridge SDK.
 
 ```powershell
 cd tools\cpp_analyzer
-xmake f --hid_sdk_root=D:\project\pi\test\sdk\cpp
+xmake f
 xmake
 xmake run vision_analyzer_tests
 ```
 
 The RP2350 HID bridge SDK is optional at build time. Provide it with
 `xmake f --hid_sdk_root=...` or the `RP2350_HID_BRIDGE_SDK` environment
-variable when live HID output is needed. ONNX Runtime is also optional and can
-be provided with `xmake f --onnxruntime_root=...` or `ONNXRUNTIME_ROOT`.
+variable when live HID output is needed. In the parent repository the default
+SDK path is `tools\rp2350_hid_bridge_cpp`. ONNX Runtime is also optional and
+can be provided with `xmake f --onnxruntime_root=...` or `ONNXRUNTIME_ROOT`.
 
 ## Runtime Modes
 
@@ -30,19 +31,31 @@ directory, so short relative paths can point at the wrong place.
 Dry-run prints status without sending SDK commands:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --dry-run --preview
+xmake run vision_analyzer --config runtime.example.cfg --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --dry-run --preview --action-log actions.txt
 ```
 
 DXGI Desktop Duplication input captures a live Windows monitor:
 
 ```powershell
+xmake run vision_analyzer --list-dxgi-outputs
+xmake run vision_analyzer --input dxgi --dxgi-output 0 --verify-input
 xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --dry-run --preview
 ```
+
+Use `--dxgi-roi X Y W H` to crop the selected output before inference. ROI
+coordinates are relative to the DXGI output. The target offset is then measured
+from the ROI center, so a centered ROI is the normal choice for live tuning.
 
 Live SDK movement:
 
 ```powershell
 xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3 --hid-gain 1.0 --hid-max-step 120 --preview
+```
+
+Run controlled HID calibration without loading a model:
+
+```powershell
+xmake run vision_analyzer --calibrate-hid --hid-port COM3 --dxgi-output 0 --calibration-step 40 --calibration-output hid-calibration.txt
 ```
 
 Enable left-click candidates only after movement is calibrated:
@@ -89,6 +102,9 @@ performance checks, ignore the first few frames and compare warmed
   preference and a switch penalty to reduce jitter.
 - The target point uses a 2D Kalman state (`x`, `y`, `vx`, `vy`) plus
   latency-compensated prediction.
+- Head detections use the head box center. Body detections are only a fallback
+  anchor and aim near the top of the body box via `--body-head-anchor-ratio`;
+  body center is not used as the movement target.
 - `--player-side ct` targets `t_body` and `t_head`; `--player-side t` targets
   `ct_body` and `ct_head`; `unknown` keeps all classes.
 - Live SDK output requires `--player-side ct` or `--player-side t`.
@@ -96,20 +112,26 @@ performance checks, ignore the first few frames and compare warmed
   help movement tracking but never trigger `--hid-click`.
 - `--hid-gain` scales the target offset before sending `mouse_move(dx, dy)`.
 - `--hid-max-step` clamps each movement axis per frame.
+- `--hid-deadzone` suppresses tiny per-axis movement.
 - `--hid-click` enables left-click output when the planner reports a fire
   candidate.
+- `--schema` validates the exported model class schema JSON. If omitted, the
+  runtime tries `best.onnx.schema.json` next to the model and warns when it is
+  absent.
 
 ## Windows Mouse Acceleration
 
 The RP2350 firmware sends standard relative USB HID mouse reports. It does not
-apply a pointer curve. If the target program consumes normal Windows pointer
-movement, Windows pointer speed and Enhance Pointer Precision can affect the
-effective movement. If the target program consumes Raw Input, OS pointer
-acceleration is typically bypassed and the result is dominated by HID counts and
-in-application sensitivity.
+apply a pointer curve. The calibration mode reads and prints Windows pointer
+thresholds, acceleration state, and pointer speed through `SystemParametersInfo`
+but does not modify them. If the target program consumes normal Windows pointer
+movement, those settings can affect movement. If the target program consumes Raw
+Input, OS pointer acceleration is typically bypassed and the result is dominated
+by HID counts and in-application sensitivity.
 
-Tune `--hid-gain` and `--hid-max-step` for the actual environment. The runtime
-does not read or modify Windows pointer settings.
+Tune `--hid-gain`, `--hid-max-step`, and `--hid-deadzone` for the actual
+environment. Use `--calibrate-hid` to capture text samples that pair HID counts
+with observed DXGI frame shift.
 
 ## Hardware Calibration Checklist
 
