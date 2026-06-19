@@ -1,4 +1,5 @@
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <opencv2/highgui.hpp>
@@ -24,6 +26,13 @@
 #include "vision_analyzer/model_schema.hpp"
 #include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/tracking.hpp"
+
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace vision_analyzer {
 namespace {
@@ -95,6 +104,10 @@ namespace {
             options.hid_click_enabled = true;
         } else if (key == "--hid-click-cooldown") {
             options.hid_click_cooldown_frames = std::stoi(require_value(key));
+        } else if (key == "--test-hid-move") {
+            options.test_hid_move = true;
+            options.hid_test_dx = std::stoi(require_value(key));
+            options.hid_test_dy = std::stoi(require_value(key));
         } else if (key == "--calibrate-hid") {
             options.calibrate_hid = true;
             options.input_source = InputSource::Dxgi;
@@ -165,6 +178,7 @@ namespace {
                 << "  --hid-deadzone PX suppress tiny per-axis movements below this offset, default 1.5\n"
                 << "  --hid-click       send left click when fire_candidate is true\n"
                 << "  --hid-click-cooldown N  minimum frame cooldown between SDK left clicks, default 6\n"
+                << "  --test-hid-move DX DY  send one SDK relative mouse move and exit\n"
                 << "  --calibrate-hid   run controlled HID moves, estimate DXGI visual shift, and exit\n"
                 << "  --calibration-output PATH  write HID calibration samples to a text file\n"
                 << "  --calibration-config-output PATH  write fitted HID tuning config, default hid-tuned.cfg\n"
@@ -220,6 +234,12 @@ void validate_options(const Options& options) {
         throw std::runtime_error("Kalman tuning values must be finite and greater than 0");
     }
     if (options.list_dxgi_outputs || options.probe_dxgi_outputs || options.verify_input) {
+        return;
+    }
+    if (options.test_hid_move) {
+        if (options.hid_port.empty()) {
+            throw std::runtime_error("--test-hid-move requires --hid-port COMx");
+        }
         return;
     }
     if (options.calibrate_hid) {
@@ -310,6 +330,41 @@ void draw_overlay(cv::Mat& frame, const std::vector<Detection>& detections, cons
     cv::putText(frame, status.str(), {12, 28}, cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(255, 255, 255), 2);
 }
 
+void test_hid_move(const Options& options) {
+    auto hid_client = create_rp2350_hid_client(options.hid_port);
+#if defined(_WIN32)
+    POINT before{};
+    POINT after{};
+    const BOOL before_ok = GetCursorPos(&before);
+    hid_client->move_relative(
+        static_cast<std::int16_t>(options.hid_test_dx),
+        static_cast<std::int16_t>(options.hid_test_dy)
+    );
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    const BOOL after_ok = GetCursorPos(&after);
+    hid_client->stop_all();
+    std::cout << "hid_test_move"
+              << " port=" << options.hid_port
+              << " dx=" << options.hid_test_dx
+              << " dy=" << options.hid_test_dy
+              << " cursor_before=" << (before_ok ? 1 : 0) << ':' << before.x << ',' << before.y
+              << " cursor_after=" << (after_ok ? 1 : 0) << ':' << after.x << ',' << after.y
+              << " cursor_delta=" << (after.x - before.x) << ',' << (after.y - before.y)
+              << '\n';
+#else
+    hid_client->move_relative(
+        static_cast<std::int16_t>(options.hid_test_dx),
+        static_cast<std::int16_t>(options.hid_test_dy)
+    );
+    hid_client->stop_all();
+    std::cout << "hid_test_move"
+              << " port=" << options.hid_port
+              << " dx=" << options.hid_test_dx
+              << " dy=" << options.hid_test_dy
+              << '\n';
+#endif
+}
+
 void run(const Options& options) {
     apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     if (options.list_dxgi_outputs) {
@@ -322,6 +377,10 @@ void run(const Options& options) {
     }
     if (options.verify_input) {
         verify_input(options);
+        return;
+    }
+    if (options.test_hid_move) {
+        test_hid_move(options);
         return;
     }
     if (options.calibrate_hid) {

@@ -71,6 +71,9 @@ struct Options {
     float hid_deadzone_px = 1.5F;
     bool hid_click_enabled = false;
     int hid_click_cooldown_frames = 6;
+    bool test_hid_move = false;
+    int hid_test_dx = 0;
+    int hid_test_dy = 0;
     bool calibrate_hid = false;
     int calibration_step_counts = 40;
     int calibration_repeats = 3;

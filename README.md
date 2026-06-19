@@ -77,6 +77,15 @@ Live SDK movement requires a matching exported schema JSON. Either keep
 `--schema`. Dry-run still allows the schema to be missing so video and DXGI
 tuning can continue while a model export is being prepared.
 
+Quickly verify the RP2350 HID bridge without loading a model or using DXGI:
+
+```powershell
+xmake run vision_analyzer --hid-port COM4 --test-hid-move 300 0
+```
+
+The command sends one relative mouse move, then prints the Windows cursor
+position before and after the move. It does not click.
+
 Run controlled HID calibration without loading a model:
 
 ```powershell
