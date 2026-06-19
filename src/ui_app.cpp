@@ -80,6 +80,24 @@ std::vector<std::string> logLines;
 std::atomic<bool> processRunning{false};
 std::atomic_bool stopRequested{false};
 std::mutex streamRedirectMutex;
+std::mutex taskStatusMutex;
+std::string taskName;
+std::string taskMessage = "空闲，可以启动任务";
+std::atomic<int> taskState{0};
+
+enum class TaskState {
+    Idle = 0,
+    Running = 1,
+    Done = 2,
+    Failed = 3,
+    Stopping = 4,
+};
+
+struct TaskStatus {
+    TaskState state = TaskState::Idle;
+    std::string name;
+    std::string message;
+};
 
 std::filesystem::path rootPath() {
     return std::filesystem::path(kProjectRoot);
@@ -125,6 +143,37 @@ void appendLog(std::string line) {
 std::vector<std::string> snapshotLog() {
     std::lock_guard<std::mutex> lock(logMutex);
     return logLines;
+}
+
+void setTaskStatus(TaskState state, std::string name, std::string message) {
+    {
+        std::lock_guard<std::mutex> lock(taskStatusMutex);
+        taskName = std::move(name);
+        taskMessage = std::move(message);
+    }
+    taskState = static_cast<int>(state);
+}
+
+TaskStatus snapshotTaskStatus() {
+    std::lock_guard<std::mutex> lock(taskStatusMutex);
+    return TaskStatus{
+        static_cast<TaskState>(taskState.load()),
+        taskName,
+        taskMessage,
+    };
+}
+
+[[nodiscard]] bool isDxgiDuplicateOutputError(const std::string& message) {
+    return message.find("DXGI DuplicateOutput failed") != std::string::npos ||
+           message.find("0x887A0004") != std::string::npos;
+}
+
+void appendFriendlyError(const std::string& message) {
+    appendLog("错误：" + message);
+    if (isDxgiDuplicateOutputError(message)) {
+        appendLog("提示：DXGI 0x887A0004 表示当前显示输出不能被 Desktop Duplication 捕获；任务已经结束，不是卡住。");
+        appendLog("处理：换 DXGI 适配器/显示器索引，关闭 HDR/远程桌面/全屏独占，或先切到视频输入验证。");
+    }
 }
 
 [[nodiscard]] int parseInt(const std::string& name, const std::string& value) {
@@ -286,19 +335,36 @@ void runTask(std::string name, std::function<void()> task) {
     }
 
     stopRequested = false;
+    setTaskStatus(TaskState::Running, name, "正在执行：" + name);
     appendLog("运行器：直接调用 " + name);
     std::thread([name = std::move(name), task = std::move(task)] {
+        bool success = false;
+        bool failed = false;
         try {
             std::lock_guard<std::mutex> streamLock(streamRedirectMutex);
             UiLogStreambuf buffer;
             ScopedStreamRedirect redirect(buffer);
             task();
-            appendLog("运行器：任务完成 " + name);
+            success = true;
         } catch (const std::exception& error) {
-            appendLog(std::string("错误：") + error.what());
+            failed = true;
+            appendFriendlyError(error.what());
         } catch (...) {
-            appendLog("错误：未知异常");
+            failed = true;
+            appendFriendlyError("未知异常");
         }
+
+        if (success && stopRequested.load()) {
+            appendLog("运行器：任务已停止 " + name);
+            setTaskStatus(TaskState::Idle, name, "已停止：" + name);
+        } else if (success) {
+            appendLog("运行器：任务完成 " + name);
+            setTaskStatus(TaskState::Done, name, "上次完成：" + name);
+        } else if (failed) {
+            appendLog("运行器：任务失败 " + name);
+            setTaskStatus(TaskState::Failed, name, "上次失败：" + name);
+        }
+        stopRequested = false;
         processRunning = false;
     }).detach();
 }
@@ -354,6 +420,8 @@ void runLive() {
 void stopProcess() {
     if (processRunning.load()) {
         stopRequested = true;
+        const auto status = snapshotTaskStatus();
+        setTaskStatus(TaskState::Stopping, status.name, "正在停止：" + status.name);
         appendLog("运行器：已请求停止，当前帧处理完后退出");
     }
 }
@@ -594,8 +662,24 @@ void composeHeader(eui::Ui& ui, float x, float y, float width) {
     label(ui, "header.sub", x, y + 32.0f, titleW, 22.0f, "训练在 Python，运行在这里：模型输入、HID 标定、预览和实机控制。", 12.0f, kMuted);
 
     const bool running = processRunning.load();
+    const auto status = snapshotTaskStatus();
+    std::string statusText = "空闲";
+    eui::Color statusColor = kAccent;
+    if (running && status.state == TaskState::Stopping) {
+        statusText = "停止中";
+        statusColor = kRose;
+    } else if (running) {
+        statusText = "运行中";
+        statusColor = kAmber;
+    } else if (status.state == TaskState::Failed) {
+        statusText = "失败";
+        statusColor = kRose;
+    } else if (status.state == TaskState::Done) {
+        statusText = "完成";
+        statusColor = kAccent;
+    }
     const float bx = x + width - badgesW;
-    badge(ui, "header.status", bx, y + 10.0f, 92.0f, running ? "运行中" : "空闲", running ? kAmber : kAccent);
+    badge(ui, "header.status", bx, y + 10.0f, 92.0f, statusText, statusColor);
     badge(ui, "header.input", bx + 102.0f, y + 10.0f, 100.0f, state.input == 0 ? "DXGI 输入" : "视频输入", kBlue);
     badge(ui, "header.port", bx + 212.0f, y + 10.0f, 120.0f, "HID " + state.hidPort, state.hidClick ? kRose : kMuted);
 }
@@ -704,7 +788,8 @@ void composeTuning(eui::Ui& ui, float x, float y, float width, float height) {
 
 void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "actions.panel", x, y, width, height);
-    sectionTitle(ui, "actions", x + 14.0f, y + 10.0f, width - 28.0f, "执行控制", processRunning.load() ? "当前有任务在跑" : "空闲，可以启动任务");
+    const auto status = snapshotTaskStatus();
+    sectionTitle(ui, "actions", x + 14.0f, y + 10.0f, width - 28.0f, "执行控制", status.message);
     const bool running = processRunning.load();
     const float pad = 14.0f;
     const float gap = 10.0f;
@@ -726,7 +811,7 @@ void composeActions(eui::Ui& ui, float x, float y, float width, float height) {
 
 void composeLog(eui::Ui& ui, float x, float y, float width, float height) {
     panel(ui, "log.panel", x, y, width, height);
-    sectionTitle(ui, "log", x + 14.0f, y + 10.0f, width - 28.0f, "输出日志", "命令、识别、标定和错误都会写在这里");
+    sectionTitle(ui, "log", x + 14.0f, y + 10.0f, width - 28.0f, "输出日志", "直接调用、识别、标定和错误都会写在这里");
 
     const auto lines = snapshotLog();
     if (lines.empty()) {
