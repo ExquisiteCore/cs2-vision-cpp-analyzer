@@ -74,8 +74,10 @@ struct Options {
     bool calibrate_hid = false;
     int calibration_step_counts = 40;
     int calibration_repeats = 3;
+    int calibration_noise_samples = 2;
     int calibration_settle_ms = 120;
     std::string calibration_output_path;
+    std::string calibration_config_output_path = "hid-tuned.cfg";
     std::string action_log_path;
     PlayerSide player_side = PlayerSide::Unknown;
     bool dry_run = false;

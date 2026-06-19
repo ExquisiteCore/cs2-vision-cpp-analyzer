@@ -15,6 +15,6 @@ struct ModelSchema {
 [[nodiscard]] std::string default_model_schema_path(const std::string& model_path);
 [[nodiscard]] ModelSchema load_model_schema(const std::string& path);
 void validate_model_schema(const ModelSchema& schema);
-void validate_configured_model_schema(const Options& options);
+void validate_configured_model_schema(const Options& options, bool require_schema = false);
 
 }  // namespace vision_analyzer

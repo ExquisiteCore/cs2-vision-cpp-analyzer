@@ -72,11 +72,21 @@ Live SDK movement:
 xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3 --hid-gain 1.0 --hid-max-step 120 --preview
 ```
 
+Live SDK movement requires a matching exported schema JSON. Either keep
+`best.onnx.schema.json` next to `best.onnx`, or pass it explicitly with
+`--schema`. Dry-run still allows the schema to be missing so video and DXGI
+tuning can continue while a model export is being prepared.
+
 Run controlled HID calibration without loading a model:
 
 ```powershell
-xmake run vision_analyzer --calibrate-hid --hid-port COM3 --dxgi-output 0 --calibration-step 40 --calibration-output hid-calibration.txt
+xmake run vision_analyzer --calibrate-hid --hid-port COM3 --dxgi-output 0 --calibration-step 40 --calibration-noise-samples 2 --calibration-output hid-calibration.txt --calibration-config-output hid-tuned.cfg
 ```
+
+Calibration records no-op noise samples, controlled HID movement samples, prints
+the fitted `hid_gain`, `hid_deadzone_px`, and `hid_max_step`, and writes a
+runtime config fragment such as `hid-tuned.cfg`. Merge or pass that config after
+checking it in the actual target environment.
 
 Enable left-click candidates only after movement is calibrated:
 
@@ -117,7 +127,10 @@ performance checks, ignore the first few frames and compare warmed
 - YOLO handles per-frame object detection.
 - Class-aware NMS keeps overlapping head and body candidates from suppressing
   each other.
-- Track IDs are assigned with IoU plus center-distance matching.
+- Body/head detections from the same faction are associated before tracking.
+  When a head is matched to its body, the head target is kept and the body
+  duplicate is suppressed; unmatched bodies remain as fallback targets.
+- Track IDs are assigned with IoU plus anchor-distance matching.
 - Target selection favors stable, close, high-confidence targets, with head
   preference and a switch penalty to reduce jitter.
 - The target point uses a 2D Kalman state (`x`, `y`, `vx`, `vy`) plus
@@ -137,7 +150,7 @@ performance checks, ignore the first few frames and compare warmed
   candidate.
 - `--schema` validates the exported model class schema JSON. If omitted, the
   runtime tries `best.onnx.schema.json` next to the model and warns when it is
-  absent.
+  absent during dry-run. Live SDK output treats a missing schema as an error.
 
 ## Windows Mouse Acceleration
 
@@ -151,7 +164,7 @@ by HID counts and in-application sensitivity.
 
 Tune `--hid-gain`, `--hid-max-step`, and `--hid-deadzone` for the actual
 environment. Use `--calibrate-hid` to capture text samples that pair HID counts
-with observed DXGI frame shift.
+with observed DXGI frame shift and to generate a fitted config file.
 
 ## Hardware Calibration Checklist
 
@@ -159,10 +172,11 @@ with observed DXGI frame shift.
 2. Run `--dry-run --preview` on a representative video.
 3. Run live movement without `--hid-click`.
 4. Start with a low gain such as `--hid-gain 0.25`.
-5. Increase `--hid-gain` until the filtered target point converges without
-   oscillation.
-6. Reduce `--hid-max-step` if movement jumps too far per frame.
-7. Enable `--hid-click` only after movement is stable.
-8. If movement differs between desktop and the target application, treat that as
+5. Run `--calibrate-hid` and inspect the generated `hid-tuned.cfg`.
+6. Increase or reduce `hid_gain` until the filtered target point converges
+   without oscillation.
+7. Reduce `hid_max_step` if movement jumps too far per frame.
+8. Enable `--hid-click` only after movement is stable.
+9. If movement differs between desktop and the target application, treat that as
    a Raw Input or pointer-acceleration difference and calibrate gain for the
    target application.

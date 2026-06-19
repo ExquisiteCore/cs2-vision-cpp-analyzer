@@ -125,10 +125,32 @@ void run_hid_calibration(const Options& options) {
 
     output << "calibration step_counts=" << options.calibration_step_counts
            << " repeats=" << options.calibration_repeats
+           << " noise_samples=" << options.calibration_noise_samples
            << " settle_ms=" << options.calibration_settle_ms
            << " frame_width=" << baseline.image.cols
            << " frame_height=" << baseline.image.rows
            << '\n';
+
+    std::vector<CalibrationSample> samples;
+    samples.reserve(static_cast<std::size_t>(options.calibration_noise_samples + options.calibration_repeats * 4));
+
+    for (int sample_index = 0; sample_index < options.calibration_noise_samples; ++sample_index) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(options.calibration_settle_ms));
+        CapturedFrame still;
+        if (!frame_source->read(still)) {
+            throw std::runtime_error("failed to capture still DXGI frame for HID calibration");
+        }
+        const cv::Point2d shift = estimate_visual_shift(baseline.image, still.image);
+        samples.push_back(CalibrationSample{0, 0, shift});
+        output << "sample"
+               << " type=noop"
+               << " index=" << sample_index
+               << " counts_dx=0 counts_dy=0"
+               << " visual_shift_x=" << shift.x
+               << " visual_shift_y=" << shift.y
+               << '\n';
+        baseline = std::move(still);
+    }
 
     for (int repeat = 0; repeat < options.calibration_repeats; ++repeat) {
         for (const auto& [dx, dy] : moves) {
@@ -141,7 +163,9 @@ void run_hid_calibration(const Options& options) {
             }
 
             const cv::Point2d shift = estimate_visual_shift(baseline.image, moved.image);
+            samples.push_back(CalibrationSample{dx, dy, shift});
             output << "sample"
+                   << " type=move"
                    << " repeat=" << repeat
                    << " counts_dx=" << dx
                    << " counts_dy=" << dy
@@ -150,6 +174,32 @@ void run_hid_calibration(const Options& options) {
                    << '\n';
             baseline = std::move(moved);
         }
+    }
+
+    const CalibrationFit fit = fit_hid_calibration(samples, options.calibration_step_counts);
+    if (!fit.valid) {
+        throw std::runtime_error("HID calibration did not produce enough visual movement to fit hid_gain");
+    }
+
+    output << "fit"
+           << " valid=1"
+           << " hid_gain=" << fit.hid_gain
+           << " gain_x=" << fit.gain_x
+           << " gain_y=" << fit.gain_y
+           << " hid_deadzone_px=" << fit.deadzone_px
+           << " hid_max_step=" << fit.max_step
+           << " movement_samples=" << fit.movement_samples
+           << " noise_samples=" << fit.noise_samples
+           << " noise_px=" << fit.noise_px
+           << '\n';
+
+    if (!options.calibration_config_output_path.empty()) {
+        std::ofstream config_output(options.calibration_config_output_path);
+        if (!config_output) {
+            throw std::runtime_error("failed to open calibration config output: " + options.calibration_config_output_path);
+        }
+        write_hid_tuning_config(config_output, options, fit);
+        output << "tuned_config=" << options.calibration_config_output_path << '\n';
     }
 
     hid_client->stop_all();

@@ -102,10 +102,14 @@ namespace {
             options.calibration_step_counts = std::stoi(require_value(key));
         } else if (key == "--calibration-repeats") {
             options.calibration_repeats = std::stoi(require_value(key));
+        } else if (key == "--calibration-noise-samples") {
+            options.calibration_noise_samples = std::stoi(require_value(key));
         } else if (key == "--calibration-settle") {
             options.calibration_settle_ms = std::stoi(require_value(key));
         } else if (key == "--calibration-output") {
             options.calibration_output_path = require_value(key);
+        } else if (key == "--calibration-config-output") {
+            options.calibration_config_output_path = require_value(key);
         } else if (key == "--action-log") {
             options.action_log_path = require_value(key);
         } else if (key == "--player-side") {
@@ -163,6 +167,7 @@ namespace {
                 << "  --hid-click-cooldown N  minimum frame cooldown between SDK left clicks, default 6\n"
                 << "  --calibrate-hid   run controlled HID moves, estimate DXGI visual shift, and exit\n"
                 << "  --calibration-output PATH  write HID calibration samples to a text file\n"
+                << "  --calibration-config-output PATH  write fitted HID tuning config, default hid-tuned.cfg\n"
                 << "  --action-log PATH write per-frame planned movement/click commands to a text file\n"
                 << "  --player-side SIDE  unknown, ct, or t; ct targets T classes, t targets CT classes\n"
                 << "  --dry-run         run detection and planning without SDK output\n"
@@ -224,8 +229,9 @@ void validate_options(const Options& options) {
         if (options.hid_port.empty()) {
             throw std::runtime_error("--calibrate-hid requires --hid-port COMx");
         }
-        if (options.calibration_step_counts <= 0 || options.calibration_repeats <= 0 || options.calibration_settle_ms < 0) {
-            throw std::runtime_error("calibration step/repeats must be greater than 0 and settle must be non-negative");
+        if (options.calibration_step_counts <= 0 || options.calibration_repeats <= 0 ||
+            options.calibration_noise_samples < 0 || options.calibration_settle_ms < 0) {
+            throw std::runtime_error("calibration step/repeats must be greater than 0; noise samples and settle must be non-negative");
         }
         return;
     }
@@ -324,7 +330,7 @@ void run(const Options& options) {
     }
 
     auto frame_source = create_frame_source(options);
-    validate_configured_model_schema(options);
+    validate_configured_model_schema(options, !options.dry_run);
 
     auto detector = create_detector(options.backend, options.model_path);
     if (options.warmup_frames > 0) {
@@ -391,7 +397,8 @@ void run(const Options& options) {
         frame = captured_frame.image;
         const auto detection_result = detector->detect(frame, options.confidence, options.nms_threshold);
         const auto enemy_detections = filter_enemy_detections(detection_result.detections, options.player_side);
-        const auto tracks = track_manager.update(enemy_detections, frame.size());
+        const auto fused_detections = fuse_head_body_detections(enemy_detections, options.tuning);
+        const auto tracks = track_manager.update(fused_detections, frame.size(), options.tuning);
         const auto selected = selector.select(tracks, frame.size(), analysis_state.active_track_id());
 
         const auto now = std::chrono::steady_clock::now();
@@ -407,7 +414,7 @@ void run(const Options& options) {
             captured_frame.timestamp_ms,
             fps,
             detection_result.timing,
-            static_cast<int>(enemy_detections.size()),
+            static_cast<int>(fused_detections.size()),
             std::nullopt,
         };
         if (selected.has_value()) {
@@ -450,7 +457,7 @@ void run(const Options& options) {
 
         if (options.preview) {
             cv::Mat display = frame.clone();
-            draw_overlay(display, enemy_detections, report, detector->name());
+            draw_overlay(display, fused_detections, report, detector->name());
             cv::imshow("CS2 Vision C++ Analyzer", display);
             const int key = cv::waitKey(1) & 0xFF;
             if (key == 27 || key == 'q' || key == 'Q') {

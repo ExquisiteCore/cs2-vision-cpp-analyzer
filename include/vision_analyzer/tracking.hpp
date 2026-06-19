@@ -11,11 +11,19 @@ namespace vision_analyzer {
 
 [[nodiscard]] cv::Point2f box_center(const cv::Rect& box);
 [[nodiscard]] cv::Point2f target_anchor_point(const Detection& detection, float body_head_anchor_ratio = 0.18F);
+[[nodiscard]] std::vector<Detection> fuse_head_body_detections(
+    const std::vector<Detection>& detections,
+    RuntimeTuningConfig tuning = {}
+);
 [[nodiscard]] float intersection_over_union(const cv::Rect& left, const cv::Rect& right);
 
 class TrackManager {
 public:
-    [[nodiscard]] std::vector<TrackedDetection> update(const std::vector<Detection>& detections, const cv::Size& frame_size);
+    [[nodiscard]] std::vector<TrackedDetection> update(
+        const std::vector<Detection>& detections,
+        const cv::Size& frame_size,
+        RuntimeTuningConfig tuning = {}
+    );
 
 private:
     struct Track {
@@ -30,7 +38,12 @@ private:
         float confidence_ema = 0.0F;
     };
 
-    [[nodiscard]] float match_score(const Track& track, const Detection& detection, const cv::Size& frame_size) const;
+    [[nodiscard]] float match_score(
+        const Track& track,
+        const Detection& detection,
+        const cv::Size& frame_size,
+        RuntimeTuningConfig tuning
+    ) const;
     [[nodiscard]] TrackedDetection export_track(const Track& track) const;
 
     std::vector<Track> tracks_;

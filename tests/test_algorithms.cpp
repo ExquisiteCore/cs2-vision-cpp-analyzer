@@ -3,11 +3,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "vision_analyzer/aim_controller.hpp"
+#include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/model_schema.hpp"
 #include "vision_analyzer/postprocess.hpp"
@@ -103,6 +105,19 @@ void test_model_schema_file_rejects_wrong_class_order() {
     }
     std::filesystem::remove(path);
     require(rejected, "model schema should reject wrong class order");
+}
+
+void test_live_schema_validation_requires_schema_file() {
+    Options options;
+    options.model_path = (std::filesystem::temp_directory_path() / "missing-live-model.onnx").string();
+
+    bool rejected = false;
+    try {
+        validate_configured_model_schema(options, true);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "live schema validation should reject missing schema");
 }
 
 void test_decode_yolo_output_accepts_channels_last_shape() {
@@ -250,6 +265,39 @@ void test_target_anchor_point_uses_body_top_fallback() {
     require_near(head_anchor.y, 508.0F, 0.01F, "head anchor should use head center y");
 }
 
+void test_fuse_head_body_detections_suppresses_body_when_head_matches() {
+    RuntimeTuningConfig tuning;
+    tuning.body_head_anchor_ratio = 0.20F;
+    const std::vector<Detection> detections = {
+        Detection{0, "ct_body", 0.80F, cv::Rect(900, 500, 60, 180)},
+        Detection{1, "ct_head", 0.92F, cv::Rect(916, 522, 28, 28)},
+        Detection{2, "t_body", 0.85F, cv::Rect(1200, 500, 60, 180)},
+    };
+
+    const auto fused = fuse_head_body_detections(detections, tuning);
+
+    require(fused.size() == 2, "matched body/head should become one head target plus unmatched body");
+    require(fused[0].class_id == 1, "matched head should be kept first");
+    require(fused[1].class_id == 2, "unmatched body should remain as fallback");
+}
+
+void test_track_manager_uses_configured_body_anchor_ratio() {
+    RuntimeTuningConfig tuning;
+    tuning.body_head_anchor_ratio = 0.25F;
+    TrackManager manager;
+    const cv::Size frame_size(1920, 1080);
+
+    const auto tracks = manager.update(
+        {Detection{0, "ct_body", 0.90F, cv::Rect(900, 400, 120, 200)}},
+        frame_size,
+        tuning
+    );
+
+    require(tracks.size() == 1, "body detection should create one track");
+    require_near(tracks[0].center.x, 960.0F, 0.01F, "body track center should use body anchor x");
+    require_near(tracks[0].center.y, 450.0F, 0.01F, "body track center should use configured anchor ratio");
+}
+
 void test_analysis_state_predicts_latency_in_frame_units() {
     AnalysisState state;
     const cv::Size frame_size(1920, 1080);
@@ -341,8 +389,8 @@ void test_analysis_state_never_fires_for_body_class() {
     const TrackedDetection selected{
         4,
         Detection{0, "ct_body", 0.95F, cv::Rect(930, 500, 60, 100)},
-        {960.0F, 540.0F},
-        {960.0F, 540.0F},
+        {960.0F, 518.0F},
+        {960.0F, 518.0F},
         {0.0F, 0.0F},
         10,
         10,
@@ -368,8 +416,8 @@ void test_analysis_state_aims_body_detection_at_head_anchor() {
     const TrackedDetection selected{
         4,
         Detection{0, "ct_body", 0.95F, cv::Rect(930, 450, 60, 180)},
-        {960.0F, 540.0F},
-        {960.0F, 540.0F},
+        {960.0F, 486.0F},
+        {960.0F, 486.0F},
         {0.0F, 0.0F},
         10,
         10,
@@ -460,6 +508,31 @@ void test_aim_controller_deadzone_suppresses_tiny_steps() {
 
     require(command.dx == 0, "deadzone should suppress tiny x movement");
     require(command.dy == -3, "deadzone should keep movement outside threshold");
+}
+
+void test_hid_calibration_fit_generates_tuning_values() {
+    const std::vector<CalibrationSample> samples = {
+        CalibrationSample{0, 0, {0.2, 0.1}},
+        CalibrationSample{40, 0, {10.0, 0.1}},
+        CalibrationSample{-40, 0, {-10.0, -0.1}},
+        CalibrationSample{0, 40, {0.1, 8.0}},
+        CalibrationSample{0, -40, {-0.1, -8.0}},
+    };
+
+    const CalibrationFit fit = fit_hid_calibration(samples, 40);
+
+    require(fit.valid, "calibration fit should be valid with movement samples");
+    require_near(static_cast<float>(fit.gain_x), 4.0F, 0.01F, "x gain should use counts per visual pixel");
+    require_near(static_cast<float>(fit.gain_y), 5.0F, 0.01F, "y gain should use counts per visual pixel");
+    require_near(static_cast<float>(fit.hid_gain), 4.5F, 0.01F, "hid gain should combine axis gains");
+    require(fit.deadzone_px >= 1.0 && fit.deadzone_px <= 8.0, "deadzone should be bounded");
+    require(fit.max_step == 120, "max step should scale from calibration step");
+
+    Options options;
+    std::ostringstream output;
+    write_hid_tuning_config(output, options, fit);
+    require(output.str().find("hid_gain=4.5") != std::string::npos, "tuned config should include fitted gain");
+    require(output.str().find("hid_max_step=120") != std::string::npos, "tuned config should include max step");
 }
 
 void test_runtime_config_file_overrides_tuning_and_io() {
@@ -604,6 +677,7 @@ int main() {
         test_model_class_schema_rejects_wrong_output_dimensions();
         test_model_schema_file_validates_class_order();
         test_model_schema_file_rejects_wrong_class_order();
+        test_live_schema_validation_requires_schema_file();
         test_decode_yolo_output_accepts_channels_last_shape();
         test_input_source_parser_accepts_video_and_dxgi();
         test_track_manager_keeps_id_for_small_motion();
@@ -611,6 +685,8 @@ int main() {
         test_target_selector_switches_when_challenger_is_clearly_better();
         test_track_manager_smooths_velocity_spikes();
         test_target_anchor_point_uses_body_top_fallback();
+        test_fuse_head_body_detections_suppresses_body_when_head_matches();
+        test_track_manager_uses_configured_body_anchor_ratio();
         test_analysis_state_predicts_latency_in_frame_units();
         test_analysis_state_offsets_from_filtered_analysis_point();
         test_motion_filter_is_stable_and_moves_toward_measurement();
@@ -619,6 +695,7 @@ int main() {
         test_analysis_state_aims_body_detection_at_head_anchor();
         test_aim_controller_scales_and_clamps_target_offset();
         test_aim_controller_deadzone_suppresses_tiny_steps();
+        test_hid_calibration_fit_generates_tuning_values();
         test_runtime_config_file_overrides_tuning_and_io();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();

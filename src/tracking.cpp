@@ -22,6 +22,17 @@ constexpr double kPi = 3.14159265358979323846;
     return std::clamp(value, 0.0F, 1.0F);
 }
 
+[[nodiscard]] bool same_faction(int left_class_id, int right_class_id) {
+    const auto is_ct = [](int class_id) {
+        return class_id == 0 || class_id == 1;
+    };
+    const auto is_t = [](int class_id) {
+        return class_id == 2 || class_id == 3;
+    };
+    return (is_ct(left_class_id) && is_ct(right_class_id)) ||
+           (is_t(left_class_id) && is_t(right_class_id));
+}
+
 }  // namespace
 
 cv::Point2f box_center(const cv::Rect& box) {
@@ -35,6 +46,80 @@ cv::Point2f target_anchor_point(const Detection& detection, float body_head_anch
         return {box.x + box.width / 2.0F, box.y + box.height * clamped_ratio};
     }
     return box_center(box);
+}
+
+std::vector<Detection> fuse_head_body_detections(
+    const std::vector<Detection>& detections,
+    RuntimeTuningConfig tuning
+) {
+    struct AssociationCandidate {
+        int body_index = -1;
+        int head_index = -1;
+        float score = 0.0F;
+    };
+
+    std::vector<AssociationCandidate> candidates;
+    for (int body_index = 0; body_index < static_cast<int>(detections.size()); ++body_index) {
+        const Detection& body = detections[static_cast<std::size_t>(body_index)];
+        if (!is_body(body.class_id)) {
+            continue;
+        }
+        const cv::Point2f anchor = target_anchor_point(body, tuning.body_head_anchor_ratio);
+        const float horizontal_margin = std::max(8.0F, body.box.width * 0.55F);
+        const float min_x = body.box.x - horizontal_margin;
+        const float max_x = body.box.x + body.box.width + horizontal_margin;
+        const float min_y = body.box.y - body.box.height * 0.45F;
+        const float max_y = body.box.y + body.box.height * 0.45F;
+        const float distance_gate = std::max(32.0F, body.box.height * 0.42F);
+
+        for (int head_index = 0; head_index < static_cast<int>(detections.size()); ++head_index) {
+            const Detection& head = detections[static_cast<std::size_t>(head_index)];
+            if (!is_head(head.class_id) || !same_faction(body.class_id, head.class_id)) {
+                continue;
+            }
+
+            const cv::Point2f head_center = box_center(head.box);
+            if (head_center.x < min_x || head_center.x > max_x ||
+                head_center.y < min_y || head_center.y > max_y) {
+                continue;
+            }
+
+            const float distance = point_distance(anchor, head_center);
+            if (distance <= distance_gate) {
+                candidates.push_back({body_index, head_index, distance});
+            }
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const AssociationCandidate& left, const AssociationCandidate& right) {
+        return left.score < right.score;
+    });
+
+    std::vector<bool> matched_bodies(detections.size(), false);
+    std::vector<bool> matched_heads(detections.size(), false);
+    for (const auto& candidate : candidates) {
+        if (matched_bodies[static_cast<std::size_t>(candidate.body_index)] ||
+            matched_heads[static_cast<std::size_t>(candidate.head_index)]) {
+            continue;
+        }
+        matched_bodies[static_cast<std::size_t>(candidate.body_index)] = true;
+        matched_heads[static_cast<std::size_t>(candidate.head_index)] = true;
+    }
+
+    std::vector<Detection> fused;
+    fused.reserve(detections.size());
+    for (const auto& detection : detections) {
+        if (is_head(detection.class_id)) {
+            fused.push_back(detection);
+        }
+    }
+    for (int index = 0; index < static_cast<int>(detections.size()); ++index) {
+        const Detection& detection = detections[static_cast<std::size_t>(index)];
+        if (is_body(detection.class_id) && !matched_bodies[static_cast<std::size_t>(index)]) {
+            fused.push_back(detection);
+        }
+    }
+    return fused;
 }
 
 float intersection_over_union(const cv::Rect& left, const cv::Rect& right) {
@@ -52,8 +137,13 @@ float intersection_over_union(const cv::Rect& left, const cv::Rect& right) {
     return intersection / union_area;
 }
 
-float TrackManager::match_score(const Track& track, const Detection& detection, const cv::Size& frame_size) const {
-    const auto detection_center = box_center(detection.box);
+float TrackManager::match_score(
+    const Track& track,
+    const Detection& detection,
+    const cv::Size& frame_size,
+    RuntimeTuningConfig tuning
+) const {
+    const auto detection_center = target_anchor_point(detection, tuning.body_head_anchor_ratio);
     const float iou = intersection_over_union(track.detection.box, detection.box);
     const float distance = point_distance(track.predicted_center, detection_center);
     const float distance_gate = std::max(48.0F, frame_diagonal(frame_size) * 0.085F);
@@ -79,7 +169,11 @@ TrackedDetection TrackManager::export_track(const Track& track) const {
     };
 }
 
-std::vector<TrackedDetection> TrackManager::update(const std::vector<Detection>& detections, const cv::Size& frame_size) {
+std::vector<TrackedDetection> TrackManager::update(
+    const std::vector<Detection>& detections,
+    const cv::Size& frame_size,
+    RuntimeTuningConfig tuning
+) {
     for (auto& track : tracks_) {
         track.predicted_center = track.center + track.velocity;
         ++track.age;
@@ -98,7 +192,8 @@ std::vector<TrackedDetection> TrackManager::update(const std::vector<Detection>&
             const float score = match_score(
                 tracks_[static_cast<std::size_t>(track_index)],
                 detections[static_cast<std::size_t>(detection_index)],
-                frame_size
+                frame_size,
+                tuning
             );
             if (score >= 0.22F) {
                 candidates.push_back({track_index, detection_index, score});
@@ -120,7 +215,7 @@ std::vector<TrackedDetection> TrackManager::update(const std::vector<Detection>&
 
         auto& track = tracks_[static_cast<std::size_t>(candidate.track_index)];
         const auto& detection = detections[static_cast<std::size_t>(candidate.detection_index)];
-        const cv::Point2f new_center = box_center(detection.box);
+        const cv::Point2f new_center = target_anchor_point(detection, tuning.body_head_anchor_ratio);
         const cv::Point2f observed_velocity = new_center - track.center;
         track.velocity = track.hits <= 1
             ? observed_velocity
@@ -142,7 +237,7 @@ std::vector<TrackedDetection> TrackManager::update(const std::vector<Detection>&
             continue;
         }
         const auto& detection = detections[static_cast<std::size_t>(detection_index)];
-        const cv::Point2f center = box_center(detection.box);
+        const cv::Point2f center = target_anchor_point(detection, tuning.body_head_anchor_ratio);
         tracks_.push_back(Track{
             next_id_++,
             detection,
@@ -181,10 +276,7 @@ float TargetSelector::score(
     std::optional<int> active_track_id
 ) const {
     const cv::Point2f frame_center(frame_size.width / 2.0F, frame_size.height / 2.0F);
-    const cv::Point2f anchor_delta =
-        target_anchor_point(track.detection, tuning_.body_head_anchor_ratio) - box_center(track.detection.box);
-    const cv::Point2f predicted_anchor = track.predicted_center + anchor_delta;
-    const float distance = point_distance(predicted_anchor, frame_center);
+    const float distance = point_distance(track.predicted_center, frame_center);
     const float normalized_distance = distance / std::max(1.0F, frame_diagonal(frame_size));
     const float class_bias = is_head(track.detection.class_id) ? 0.70F : 1.00F;
     const float confidence_factor = 1.0F / std::max(0.05F, track.confidence_ema);
@@ -367,7 +459,7 @@ TargetFrame AnalysisState::update(
     const float latency_frames = static_cast<float>(
         std::clamp(latency_ms / std::max(1.0, frame_interval_ema_ms_), 0.0, 2.0)
     );
-    const cv::Point2f anchor = target_anchor_point(selected.detection, tuning_.body_head_anchor_ratio);
+    const cv::Point2f anchor = selected.center;
     const cv::Point2f predicted = anchor + selected.velocity * latency_frames;
     (void)filter_.update(predicted, timestamp_ms);
     const cv::Point2f analysis_point = filter_.predict(latency_ms);

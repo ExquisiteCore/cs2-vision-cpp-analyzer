@@ -125,10 +125,14 @@ void apply_entry(Options& options, const std::string& key, const std::string& va
         options.calibration_step_counts = std::stoi(value);
     } else if (key == "calibration_repeats") {
         options.calibration_repeats = std::stoi(value);
+    } else if (key == "calibration_noise_samples") {
+        options.calibration_noise_samples = std::stoi(value);
     } else if (key == "calibration_settle_ms") {
         options.calibration_settle_ms = std::stoi(value);
     } else if (key == "calibration_output") {
         options.calibration_output_path = value;
+    } else if (key == "calibration_config_output") {
+        options.calibration_config_output_path = value;
     } else if (key == "action_log") {
         options.action_log_path = value;
     } else {

@@ -53,12 +53,18 @@ void validate_model_schema(const ModelSchema& schema) {
     }
 }
 
-void validate_configured_model_schema(const Options& options) {
+void validate_configured_model_schema(const Options& options, bool require_schema) {
     const bool explicit_schema = !options.model_schema_path.empty();
     const std::string schema_path = explicit_schema
         ? options.model_schema_path
         : default_model_schema_path(options.model_path);
     if (!explicit_schema && !std::filesystem::exists(schema_path)) {
+        if (require_schema) {
+            throw std::runtime_error(
+                "live HID output requires model schema: " + schema_path +
+                " (export with cs2-vision-trainer export or pass --schema)"
+            );
+        }
         std::cout << "model_schema=missing path=" << schema_path << '\n';
         return;
     }

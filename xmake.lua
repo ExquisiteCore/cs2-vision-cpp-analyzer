@@ -65,7 +65,8 @@ target("vision_analyzer_tests")
         "src/hid_output.cpp",
         "src/aim_controller.cpp",
         "src/runtime_config.cpp",
-        "src/model_schema.cpp"
+        "src/model_schema.cpp",
+        "src/calibration_fit.cpp"
     )
     add_packages("opencv")
     if is_plat("windows") then
