@@ -14,6 +14,7 @@
 #include "vision_analyzer/model_schema.hpp"
 #include "vision_analyzer/postprocess.hpp"
 #include "vision_analyzer/runtime_config.hpp"
+#include "vision_analyzer/runtime_session.hpp"
 #include "vision_analyzer/tracking.hpp"
 
 using namespace vision_analyzer;
@@ -668,6 +669,15 @@ void test_hid_action_sender_executes_aim_command() {
     require(client.left_clicks == 1, "HID sender should forward click command");
 }
 
+void test_runtime_session_starts_closed() {
+    RuntimeSession session;
+
+    require(!session.is_open(), "runtime session should start closed");
+    require(session.processed_frames() == 0, "closed runtime session should report zero processed frames");
+    require(session.detector_name().empty(), "closed runtime session should not report a detector");
+    require(session.input_name().empty(), "closed runtime session should not report an input");
+}
+
 }  // namespace
 
 int main() {
@@ -700,6 +710,7 @@ int main() {
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
         test_hid_action_sender_executes_aim_command();
+        test_runtime_session_starts_closed();
         std::cout << "algorithm tests passed\n";
         return 0;
     } catch (const std::exception& error) {

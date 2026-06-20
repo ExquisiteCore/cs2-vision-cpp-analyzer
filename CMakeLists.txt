@@ -42,6 +42,7 @@ add_library(vision_analyzer_runtime STATIC
     src/main.cpp
     src/model_schema.cpp
     src/postprocess.cpp
+    src/runtime_session.cpp
     src/runtime_config.cpp
     src/tracking.cpp
     src/types.cpp

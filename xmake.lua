@@ -55,6 +55,34 @@ target("vision_analyzer")
         add_syslinks("d3d11", "dxgi")
     end
 
+target("vision_runtime")
+    set_kind("shared")
+    add_includedirs("include")
+    add_defines("VISION_ANALYZER_NO_CLI_MAIN", "VISION_RUNTIME_BUILD_DLL")
+    if has_ort then
+        add_includedirs(ort_include)
+        add_defines("VISION_ANALYZER_WITH_ORT")
+        add_linkdirs(ort_lib)
+        add_links("onnxruntime")
+        add_runenvs("PATH", ort_lib)
+        after_build(function (target)
+            os.cp(path.join(ort_lib, "*.dll"), target:targetdir())
+        end)
+    end
+    if has_hid_sdk then
+        add_includedirs(hid_sdk_include)
+        add_defines("VISION_ANALYZER_WITH_RP2350_HID")
+    end
+    add_files("src/*.cpp")
+    remove_files("src/ui_app.cpp")
+    add_packages("opencv")
+    add_runenvs("PATH", torch_lib)
+    add_runenvs("PATH", tensorrt_libs)
+    if is_plat("windows") then
+        add_cxflags("/utf-8")
+        add_syslinks("d3d11", "dxgi")
+    end
+
 target("vision_analyzer_tests")
     set_kind("binary")
     add_includedirs("include")
@@ -67,9 +95,22 @@ target("vision_analyzer_tests")
         "src/aim_controller.cpp",
         "src/runtime_config.cpp",
         "src/model_schema.cpp",
-        "src/calibration_fit.cpp"
+        "src/calibration_fit.cpp",
+        "src/runtime_session.cpp",
+        "src/detector.cpp",
+        "src/frame_source.cpp"
     )
     add_packages("opencv")
+    if is_plat("windows") then
+        add_cxflags("/utf-8")
+        add_syslinks("d3d11", "dxgi")
+    end
+
+target("vision_runtime_c_api_tests")
+    set_kind("binary")
+    add_includedirs("include")
+    add_files("tests/test_c_api.cpp")
+    add_deps("vision_runtime")
     if is_plat("windows") then
         add_cxflags("/utf-8")
     end

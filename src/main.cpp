@@ -27,6 +27,7 @@
 #include "vision_analyzer/model_schema.hpp"
 #include "vision_analyzer/runtime.hpp"
 #include "vision_analyzer/runtime_config.hpp"
+#include "vision_analyzer/runtime_session.hpp"
 #include "vision_analyzer/tracking.hpp"
 
 #if defined(_WIN32)
@@ -393,153 +394,42 @@ void run(const Options& options, const std::atomic_bool* stop_requested) {
         return;
     }
 
-    auto frame_source = create_frame_source(options);
-    validate_configured_model_schema(options, !options.dry_run);
-
-    auto detector = create_detector(options.backend, options.model_path);
-    if (options.warmup_frames > 0) {
-        cv::Mat warmup_frame(kInputSize, kInputSize, CV_8UC3, cv::Scalar(0, 0, 0));
-        for (int i = 0; i < options.warmup_frames; ++i) {
-            (void)detector->detect(warmup_frame, options.confidence, options.nms_threshold);
-        }
-        std::cout << "warmup_frames=" << options.warmup_frames << '\n';
-    }
-
-    AimController aim_controller(AimControllerOptions{
-        options.hid_move_gain,
-        options.hid_max_step,
-        options.hid_deadzone_px,
-        options.hid_click_enabled,
-        options.hid_click_cooldown_frames,
-    });
-    std::ofstream action_log;
-    if (!options.action_log_path.empty()) {
-        action_log.open(options.action_log_path);
-        if (!action_log) {
-            throw std::runtime_error("failed to open action log: " + options.action_log_path);
-        }
-        action_log << "frame timestamp_ms target dx dy click lock distance offset_x offset_y\n";
-    }
-    std::unique_ptr<HidClient> hid_client;
-    std::unique_ptr<HidActionSender> hid_sender;
-    if (!options.dry_run) {
-        hid_client = create_rp2350_hid_client(options.hid_port);
-        hid_sender = std::make_unique<HidActionSender>(*hid_client);
-        std::cout << "hid_port=" << options.hid_port
-                  << " hid_gain=" << options.hid_move_gain
-                  << " hid_max_step=" << options.hid_max_step
-                  << " hid_deadzone=" << options.hid_deadzone_px
-                  << " hid_click=" << (options.hid_click_enabled ? 1 : 0)
-                  << " player_side=" << player_side_name(options.player_side) << '\n';
-    } else {
-        std::cout << "dry_run=1"
-                  << " hid_gain=" << options.hid_move_gain
-                  << " hid_max_step=" << options.hid_max_step
-                  << " hid_deadzone=" << options.hid_deadzone_px
-                  << " hid_click=" << (options.hid_click_enabled ? 1 : 0)
-                  << " player_side=" << player_side_name(options.player_side) << '\n';
-    }
-
-    TrackManager track_manager;
-    TargetSelector selector(options.tuning);
-    AnalysisState analysis_state(options.tuning);
-    cv::Mat frame;
-    int processed_index = 0;
-    auto last_time = std::chrono::steady_clock::now();
-    double fps = 0.0;
-
-    std::cout << "backend=" << detector->name()
-              << " input=" << frame_source->name()
-              << " model=" << options.model_path << '\n';
-
-    CapturedFrame captured_frame;
-    while (!should_stop() && frame_source->read(captured_frame)) {
-        if (options.max_frames > 0 && processed_index >= options.max_frames) {
+    RuntimeSession session;
+    session.open(options);
+    while (!should_stop()) {
+        const RuntimeStepResult step = session.process_next();
+        if (!step.frame_available) {
             break;
         }
 
-        frame = captured_frame.image;
-        const auto detection_result = detector->detect(frame, options.confidence, options.nms_threshold);
-        const auto enemy_detections = filter_enemy_detections(detection_result.detections, options.player_side);
-        const auto fused_detections = fuse_head_body_detections(enemy_detections, options.tuning);
-        const auto tracks = track_manager.update(fused_detections, frame.size(), options.tuning);
-        const auto selected = selector.select(tracks, frame.size(), analysis_state.active_track_id());
-
-        const auto now = std::chrono::steady_clock::now();
-        const double frame_delta = std::chrono::duration<double>(now - last_time).count();
-        if (frame_delta > 0.0) {
-            const double instant_fps = 1.0 / frame_delta;
-            fps = fps == 0.0 ? instant_fps : fps * 0.90 + instant_fps * 0.10;
-        }
-        last_time = now;
-
-        FrameReport report{
-            captured_frame.index,
-            captured_frame.timestamp_ms,
-            fps,
-            detection_result.timing,
-            static_cast<int>(fused_detections.size()),
-            std::nullopt,
-        };
-        if (selected.has_value()) {
-            report.target = analysis_state.update(*selected, frame.size(), report.timestamp_ms, report.timing.total_ms());
-        } else {
-            analysis_state.mark_no_target();
-        }
-
-        const AimCommand command = aim_controller.plan(report);
-        if (hid_sender) {
-            hid_sender->execute(command);
-        }
-        if (action_log) {
-            action_log << report.frame_index << ' '
-                       << report.timestamp_ms << ' '
-                       << (command.has_target ? 1 : 0) << ' '
-                       << command.dx << ' '
-                       << command.dy << ' '
-                       << (command.click_left ? 1 : 0) << ' '
-                       << lock_state_name(command.lock_state) << ' ';
-            if (report.target.has_value()) {
-                action_log << report.target->distance << ' '
-                           << report.target->offset.x << ' '
-                           << report.target->offset.y;
-            } else {
-                action_log << "0 0 0";
-            }
-            action_log << '\n';
-        }
+        const int processed_index = session.processed_frames() - 1;
         if (processed_index % options.status_every_frames == 0) {
-            std::cout << "frame=" << report.frame_index
-                      << " det=" << report.detection_count
-                      << " target=" << (command.has_target ? 1 : 0)
-                      << " dx=" << command.dx
-                      << " dy=" << command.dy
-                      << " click=" << (command.click_left ? 1 : 0)
-                      << " lock=" << lock_state_name(command.lock_state)
+            std::cout << "frame=" << step.report.frame_index
+                      << " det=" << step.report.detection_count
+                      << " target=" << (step.command.has_target ? 1 : 0)
+                      << " dx=" << step.command.dx
+                      << " dy=" << step.command.dy
+                      << " click=" << (step.command.click_left ? 1 : 0)
+                      << " lock=" << lock_state_name(step.command.lock_state)
                       << '\n';
         }
 
         if (options.preview) {
-            cv::Mat display = frame.clone();
-            draw_overlay(display, fused_detections, report, detector->name());
+            cv::Mat display = step.frame.clone();
+            draw_overlay(display, step.detections, step.report, session.detector_name());
             cv::imshow("CS2 Vision C++ Analyzer", display);
             const int key = cv::waitKey(1) & 0xFF;
             if (key == 27 || key == 'q' || key == 'Q') {
                 break;
             }
         }
-
-        ++processed_index;
     }
 
     if (should_stop()) {
         std::cout << "stopped=1\n";
     }
-    std::cout << "processed_frames=" << processed_index << '\n';
-    if (hid_sender) {
-        hid_sender->stop_all();
-    }
-    frame_source->release();
+    std::cout << "processed_frames=" << session.processed_frames() << '\n';
+    session.close();
 }
 
 }  // namespace vision_analyzer

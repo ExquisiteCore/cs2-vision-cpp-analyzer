@@ -82,6 +82,20 @@ The executable is generated under:
 build\windows\x64\release\vision_analyzer.exe
 ```
 
+Build the reusable DLL:
+
+```powershell
+xmake build vision_runtime
+xmake run vision_runtime_c_api_tests
+```
+
+DLL outputs:
+
+```text
+build\windows\x64\release\vision_runtime.dll
+build\windows\x64\release\vision_runtime.lib
+```
+
 Use `xmake run` when possible. It sets runtime DLL search paths for dependencies
 resolved by this project.
 
@@ -306,3 +320,39 @@ Tune these values on the actual target machine:
 ```powershell
 xmake run vision_analyzer --help
 ```
+
+## C API DLL
+
+`vision_runtime.dll` exports a stable C ABI declared in:
+
+```text
+include\vision_analyzer\vision_runtime_c_api.h
+```
+
+The API uses an opaque `VaRuntime*` handle and plain C structs:
+
+```c
+VaRuntime* runtime = va_create();
+va_set_model(runtime, "best.onnx");
+va_set_schema(runtime, "best.onnx.schema.json");
+va_set_backend(runtime, "opencv-onnx");
+va_open_video(runtime, "videos/02.mp4", 1);
+
+VaRuntimeAction action;
+while (va_process_next(runtime, &action) == 1) {
+    printf("%d %d %d\n", action.frame_index, action.dx, action.dy);
+}
+
+va_destroy(runtime);
+```
+
+Return codes:
+
+```text
+0   success for configuration/open/close calls
+1   frame processed for va_process_next
+0   end-of-stream for va_process_next
+-1  error; read va_last_error(runtime)
+```
+
+The main Python repository wraps this DLL with `cs2_vision_runtime.VisionRuntime`.
