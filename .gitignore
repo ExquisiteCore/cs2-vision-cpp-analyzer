@@ -3,5 +3,6 @@
 build/
 build-ui/
 actions.txt
+cli-*-actions.txt
 hid-calibration.txt
 hid-tuned.cfg

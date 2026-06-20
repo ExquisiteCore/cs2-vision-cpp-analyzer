@@ -17,19 +17,9 @@ xmake
 xmake run vision_analyzer_tests
 ```
 
-可选的 EUI 桌面控制台：
-
-```powershell
-cd tools\cpp_analyzer
-cmake -S . -B build-ui -DEUI_NEO_ROOT=D:/project/EUI-NEO
-cmake --build build-ui --config Release --target vision_analyzer_ui
-.\build-ui\Release\vision_analyzer_ui.exe
-```
-
-这个 UI 是现有 `vision_analyzer.exe` 的启动控制台：可以编辑模型路径、
-DXGI/HID 参数和调参值，执行输入验证、HID 探针、标定、干跑预览和实机
-运行，并把子进程输出流式显示在日志面板里。底层分析器二进制仍然由
-`xmake` 构建。
+UI entry is deprecated. Treat `vision_analyzer.exe` as the maintained runtime
+entry point. The old EUI files are kept only as archived integration code and
+are not part of the current validation path.
 
 The RP2350 HID bridge SDK is optional at build time. Provide it with
 `xmake f --hid_sdk_root=...` or the `RP2350_HID_BRIDGE_SDK` environment
@@ -41,6 +31,53 @@ can be provided with `xmake f --onnxruntime_root=...` or `ONNXRUNTIME_ROOT`.
 
 Use absolute paths with `xmake run`; xmake may launch the binary from the build
 directory, so short relative paths can point at the wrong place.
+
+## CLI Verification
+
+Use this flow to prove the runtime can read frames, detect targets, plan mouse
+movement, and decide when a left click would be emitted.
+
+Verify video input:
+
+```powershell
+xmake run vision_analyzer --video D:\project\cs2-vision-trainer\videos\02.mp4 --verify-input
+```
+
+Expected output contains `input_verify source=video` with non-zero width,
+height, and RGB mean values.
+
+Verify live Windows capture:
+
+```powershell
+xmake run vision_analyzer --list-dxgi-outputs
+xmake run vision_analyzer --probe-dxgi-outputs
+xmake run vision_analyzer --input dxgi --dxgi-adapter 0 --dxgi-output 0 --verify-input --dxgi-debug
+```
+
+Pick the adapter/output where `duplicate_output=0x0`. On hybrid laptops this is
+usually the integrated GPU that owns the physical display, not necessarily the
+NVIDIA adapter used by the game renderer.
+
+Run a deterministic video dry-run and write the planned commands to text:
+
+```powershell
+xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\01.mp4 --dry-run --player-side unknown --start-time 160 --max-frames 300 --status-every 30 --hid-click --action-log D:\project\cs2-vision-trainer\tools\cpp_analyzer\build\cli-video-click-actions.txt
+```
+
+The action log columns are:
+
+```text
+frame timestamp_ms target dx dy click lock distance offset_x offset_y
+```
+
+Interpretation:
+
+- `target=1` means a target was selected.
+- Non-zero `dx` or `dy` means the planner produced relative mouse movement.
+- `click=1` means the planner would emit left click. In `--dry-run` it is only
+  written to the log; in live mode it is sent through `HidActionSender`.
+- Body fallback targets can guide movement but never set `click=1`; click
+  candidates require a locked head target and `--hid-click`.
 
 Dry-run prints status without sending SDK commands:
 
