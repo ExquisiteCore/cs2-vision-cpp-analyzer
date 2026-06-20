@@ -1,70 +1,169 @@
 # CS2 Vision C++ Runtime Controller
 
-C++ runtime for exported YOLO models.
+This repository contains the C++ runtime side of the CS2 vision project. The
+Python project trains and exports YOLO models. This runtime loads the exported
+model, reads frames from a video file or DXGI Desktop Duplication, detects
+targets, fuses body/head detections, tracks the selected target, filters and
+predicts the aim point, then plans bounded relative mouse movement through the
+RP2350 HID bridge SDK.
 
-The Python project trains and exports the model. This C++ tool consumes that
-model at runtime: it reads frames, runs visual detection, tracks enemy head
-candidates, filters and predicts the target point, converts the result into
-bounded relative mouse movement, and sends commands through the RP2350 HID
-bridge SDK.
+The maintained entry point is `vision_analyzer.exe`. The old UI integration is
+kept as archived code only; normal validation and usage should go through the
+CLI.
+
+## Requirements
+
+Windows build requirements:
+
+```text
+Visual Studio 2022 Build Tools with MSVC
+xmake
+Git
+```
+
+Runtime/model requirements:
+
+```text
+OpenCV DNN, provided by xmake package resolution
+Exported YOLO ONNX model
+Matching *.schema.json file for live HID mode
+RP2350 HID Bridge C++ SDK for real HID output
+```
+
+Optional acceleration:
+
+```text
+ONNX Runtime GPU
+CUDA/cuDNN
+TensorRT through ONNX Runtime TensorRT Execution Provider
+```
+
+The stable default backend is `opencv-onnx`. It runs without ONNX Runtime,
+CUDA, or TensorRT.
 
 ## Build
 
+From this repository:
+
 ```powershell
-cd tools\cpp_analyzer
-xmake f
+xmake f -m release
 xmake
 xmake run vision_analyzer_tests
 ```
 
-UI entry is deprecated. Treat `vision_analyzer.exe` as the maintained runtime
-entry point. The old EUI files are kept only as archived integration code and
-are not part of the current validation path.
+From the parent repository:
 
-The RP2350 HID bridge SDK is optional at build time. Provide it with
-`xmake f --hid_sdk_root=...` or the `RP2350_HID_BRIDGE_SDK` environment
-variable when live HID output is needed. In the parent repository the default
-SDK path is `tools\rp2350_hid_bridge_cpp`. ONNX Runtime is also optional and
-can be provided with `xmake f --onnxruntime_root=...` or `ONNXRUNTIME_ROOT`.
+```powershell
+cd tools\cpp_analyzer
+xmake f -m release
+xmake
+xmake run vision_analyzer_tests
+```
 
-## Runtime Modes
+The parent repository layout is automatically supported. If the SDK is elsewhere,
+pass it explicitly:
+
+```powershell
+xmake f -m release --hid_sdk_root=D:\project\cs2-vision-trainer\tools\rp2350_hid_bridge_cpp
+xmake
+```
+
+Enable ONNX Runtime backends:
+
+```powershell
+$env:ONNXRUNTIME_ROOT = "D:\SDK\onnxruntime-win-x64-gpu"
+xmake f -m release --onnxruntime_root=$env:ONNXRUNTIME_ROOT --hid_sdk_root=..\rp2350_hid_bridge_cpp
+xmake
+```
+
+The executable is generated under:
+
+```text
+build\windows\x64\release\vision_analyzer.exe
+```
+
+Use `xmake run` when possible. It sets runtime DLL search paths for dependencies
+resolved by this project.
+
+## Model Contract
+
+The runtime expects a YOLO ONNX model exported by the Python project. The class
+order must be:
+
+```text
+0 ct_body
+1 ct_head
+2 t_body
+3 t_head
+```
+
+Live HID output requires a schema JSON generated next to the ONNX file:
+
+```text
+best.onnx
+best.onnx.schema.json
+```
+
+Dry-run can continue without schema for quick input testing. Live mode treats a
+missing or mismatched schema as an error.
+
+## Verify Inputs
 
 Use absolute paths with `xmake run`; xmake may launch the binary from the build
-directory, so short relative paths can point at the wrong place.
+directory.
 
-## CLI Verification
-
-Use this flow to prove the runtime can read frames, detect targets, plan mouse
-movement, and decide when a left click would be emitted.
-
-Verify video input:
+Verify a video file:
 
 ```powershell
 xmake run vision_analyzer --video D:\project\cs2-vision-trainer\videos\02.mp4 --verify-input
 ```
 
-Expected output contains `input_verify source=video` with non-zero width,
-height, and RGB mean values.
+Expected output contains non-zero width, height, and RGB mean values.
 
-Verify live Windows capture:
+List and probe DXGI outputs:
 
 ```powershell
 xmake run vision_analyzer --list-dxgi-outputs
 xmake run vision_analyzer --probe-dxgi-outputs
+```
+
+Verify one DXGI output:
+
+```powershell
 xmake run vision_analyzer --input dxgi --dxgi-adapter 0 --dxgi-output 0 --verify-input --dxgi-debug
 ```
 
-Pick the adapter/output where `duplicate_output=0x0`. On hybrid laptops this is
-usually the integrated GPU that owns the physical display, not necessarily the
-NVIDIA adapter used by the game renderer.
+Choose the adapter/output where `duplicate_output=0x0`. On hybrid GPU systems,
+the valid output is usually the adapter that owns the physical monitor, not
+necessarily the high-performance GPU doing 3D rendering.
 
-Run a deterministic video dry-run and write the planned commands to text:
+If needed, crop the live input before inference:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\01.mp4 --dry-run --player-side unknown --start-time 160 --max-frames 300 --status-every 30 --hid-click --action-log D:\project\cs2-vision-trainer\tools\cpp_analyzer\build\cli-video-click-actions.txt
+--dxgi-roi X Y W H
 ```
 
-The action log columns are:
+ROI coordinates are relative to the selected DXGI output. The target offset is
+measured from the ROI center.
+
+## Offline Dry-Run
+
+Dry-run loads the model, runs detection and planning, but does not send HID
+commands:
+
+```powershell
+xmake run vision_analyzer `
+  --backend opencv-onnx `
+  --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx `
+  --video D:\project\cs2-vision-trainer\videos\02.mp4 `
+  --player-side unknown `
+  --dry-run `
+  --preview `
+  --status-every 30 `
+  --action-log actions.txt
+```
+
+Action log columns:
 
 ```text
 frame timestamp_ms target dx dy click lock distance offset_x offset_y
@@ -72,171 +171,138 @@ frame timestamp_ms target dx dy click lock distance offset_x offset_y
 
 Interpretation:
 
-- `target=1` means a target was selected.
-- Non-zero `dx` or `dy` means the planner produced relative mouse movement.
-- `click=1` means the planner would emit left click. In `--dry-run` it is only
-  written to the log; in live mode it is sent through `HidActionSender`.
-- Body fallback targets can guide movement but never set `click=1`; click
-  candidates require a locked head target and `--hid-click`.
-
-Dry-run prints status without sending SDK commands:
-
-```powershell
-xmake run vision_analyzer --config runtime.example.cfg --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\02.mp4 --dry-run --preview --action-log actions.txt
+```text
+target=1  target selected
+dx/dy     planned relative mouse movement
+click=1   left click would be emitted; dry-run only logs it
+lock=1    target lock is stable enough for fire-candidate evaluation
 ```
 
-DXGI Desktop Duplication input captures a live Windows monitor:
+Body fallback detections can guide movement, but only head detections can become
+left-click candidates.
+
+## Live HID Mode
+
+First verify the board without loading a model:
 
 ```powershell
-xmake run vision_analyzer --list-dxgi-outputs
-xmake run vision_analyzer --probe-dxgi-outputs
-xmake run vision_analyzer --input dxgi --dxgi-output 0 --verify-input
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --dry-run --preview
+xmake run vision_analyzer --hid-port COM3 --test-hid-move 300 0
 ```
 
-Use `--dxgi-roi X Y W H` to crop the selected output before inference. ROI
-coordinates are relative to the DXGI output. The target offset is then measured
-from the ROI center, so a centered ROI is the normal choice for live tuning.
-
-On hybrid GPU laptops, Desktop Duplication must run on the adapter that owns the
-actual display. If `--probe-dxgi-outputs` shows `duplicate_output=0x887A0004`
-for NVIDIA while dxdiag reports the internal panel on Intel, set the built
-binary to Windows Graphics "Power saving" / integrated GPU and start the binary
-again:
+Then run live DXGI movement without clicking:
 
 ```powershell
-$exe = (Resolve-Path .\build\windows\x64\release\vision_analyzer.exe).Path
-New-Item -Path 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences' -Force | Out-Null
-New-ItemProperty -Path 'HKCU:\Software\Microsoft\DirectX\UserGpuPreferences' -Name $exe -Value 'GpuPreference=1;' -PropertyType String -Force
-.\build\windows\x64\release\vision_analyzer.exe --probe-dxgi-outputs
-.\build\windows\x64\release\vision_analyzer.exe --input dxgi --verify-input
+xmake run vision_analyzer `
+  --backend opencv-onnx `
+  --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx `
+  --input dxgi `
+  --dxgi-output 0 `
+  --player-side ct `
+  --hid-port COM3 `
+  --hid-gain 1.0 `
+  --hid-max-step 120 `
+  --preview
 ```
 
-`--dxgi-debug` prints the first DXGI frame metadata and texture byte statistics.
-The runtime skips initial pointer-only frames (`AccumulatedFrames=0`) because
-some hybrid systems return an all-black surface before the first real desktop
-present.
-
-Live SDK movement:
+Enable left-click output only after movement is calibrated:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3 --hid-gain 1.0 --hid-max-step 120 --preview
+xmake run vision_analyzer `
+  --backend opencv-onnx `
+  --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx `
+  --input dxgi `
+  --dxgi-output 0 `
+  --player-side ct `
+  --hid-port COM3 `
+  --hid-click `
+  --hid-click-cooldown 6
 ```
 
-Live SDK movement requires a matching exported schema JSON. Either keep
-`best.onnx.schema.json` next to `best.onnx`, or pass it explicitly with
-`--schema`. Dry-run still allows the schema to be missing so video and DXGI
-tuning can continue while a model export is being prepared.
+Live HID mode requires:
 
-Quickly verify the RP2350 HID bridge without loading a model or using DXGI:
-
-```powershell
-xmake run vision_analyzer --hid-port COM4 --test-hid-move 300 0
+```text
+--player-side ct
 ```
 
-The command sends one relative mouse move, then prints the Windows cursor
-position before and after the move. It does not click.
+or:
 
-Run controlled HID calibration without loading a model:
-
-```powershell
-xmake run vision_analyzer --calibrate-hid --hid-port COM3 --dxgi-output 0 --calibration-step 40 --calibration-noise-samples 2 --calibration-output hid-calibration.txt --calibration-config-output hid-tuned.cfg
+```text
+--player-side t
 ```
 
-Calibration records no-op noise samples, controlled HID movement samples, prints
-the fitted `hid_gain`, `hid_deadzone_px`, and `hid_max_step`, and writes a
-runtime config fragment such as `hid-tuned.cfg`. Merge or pass that config after
-checking it in the actual target environment.
+`unknown` is allowed for dry-run, but not for live HID output.
 
-Enable left-click candidates only after movement is calibrated:
+## HID Calibration
+
+Calibration sends controlled relative mouse moves through the board, observes
+the visual shift through DXGI, and writes a fitted config fragment:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --player-side ct --hid-port COM3 --hid-click --hid-click-cooldown 6
+xmake run vision_analyzer `
+  --calibrate-hid `
+  --hid-port COM3 `
+  --dxgi-output 0 `
+  --calibration-step 40 `
+  --calibration-noise-samples 2 `
+  --calibration-output hid-calibration.txt `
+  --calibration-config-output hid-tuned.cfg
 ```
 
-Skip an intro/loading segment and process a short slice:
+Review the generated `hid-tuned.cfg`, then pass it before CLI overrides:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --video D:\project\cs2-vision-trainer\videos\01.mp4 --dry-run --start-time 160 --max-frames 300
+xmake run vision_analyzer --config hid-tuned.cfg --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3
 ```
 
 ## Backends
 
 ```text
---backend opencv-onnx  Stable CPU ONNX path.
---backend opencv-cuda  Requires an OpenCV build with CUDA DNN support.
---backend ort-cuda     ONNX Runtime CUDA Execution Provider.
---backend ort-tensorrt ONNX Runtime TensorRT Execution Provider, with CUDA fallback.
---backend tensorrt     Reserved for native TensorRT C++ builds.
+opencv-onnx   Stable CPU ONNX path through OpenCV DNN.
+opencv-cuda   Requires OpenCV built with CUDA DNN support.
+ort-cuda      ONNX Runtime CUDA Execution Provider.
+ort-tensorrt  ONNX Runtime TensorRT Execution Provider, with CUDA fallback.
+tensorrt      Reserved for native TensorRT C++ builds.
 ```
 
-The xmake file uses the `onnxruntime_root` config value or `ONNXRUNTIME_ROOT`.
-If ONNX Runtime is not found, the OpenCV backend still builds and the ORT
-backends report unavailable at runtime.
-
-Use `xmake run` unless you have manually added the ONNX Runtime, CUDA/cuDNN, and
-TensorRT DLL directories to `PATH`. The xmake target sets the runtime paths for
-the current project environment.
-
-The first ORT CUDA frame includes provider initialization and graph setup. For
-performance checks, ignore the first few frames and compare warmed
-`inference_ms` values.
+If ONNX Runtime is not configured, ORT backends report unavailable at runtime
+and the OpenCV backend remains usable.
 
 ## Algorithm Notes
 
-- YOLO handles per-frame object detection.
 - Class-aware NMS keeps overlapping head and body candidates from suppressing
   each other.
 - Body/head detections from the same faction are associated before tracking.
-  When a head is matched to its body, the head target is kept and the body
-  duplicate is suppressed; unmatched bodies remain as fallback targets.
-- Track IDs are assigned with IoU plus anchor-distance matching.
-- Target selection favors stable, close, high-confidence targets, with head
-  preference and a switch penalty to reduce jitter.
-- The target point uses a 2D Kalman state (`x`, `y`, `vx`, `vy`) plus
-  latency-compensated prediction.
-- Head detections use the head box center. Body detections are only a fallback
-  anchor and aim near the top of the body box via `--body-head-anchor-ratio`;
-  body center is not used as the movement target.
-- `--player-side ct` targets `t_body` and `t_head`; `--player-side t` targets
-  `ct_body` and `ct_head`; `unknown` keeps all classes.
-- Live SDK output requires `--player-side ct` or `--player-side t`.
-- Only head classes can become left-click fire candidates; body classes can
-  help movement tracking but never trigger `--hid-click`.
-- `--hid-gain` scales the target offset before sending `mouse_move(dx, dy)`.
-- `--hid-max-step` clamps each movement axis per frame.
-- `--hid-deadzone` suppresses tiny per-axis movement.
-- `--hid-click` enables left-click output when the planner reports a fire
-  candidate.
-- `--schema` validates the exported model class schema JSON. If omitted, the
-  runtime tries `best.onnx.schema.json` next to the model and warns when it is
-  absent during dry-run. Live SDK output treats a missing schema as an error.
+- Matched head detections are preferred; unmatched body detections remain as
+  fallback anchors near the top of the body box.
+- Track IDs use IoU and anchor-distance matching.
+- Target selection favors stable, close, high-confidence targets and applies a
+  switch penalty to reduce jitter.
+- The target point uses a 2D Kalman state with latency-compensated prediction.
+- `--player-side ct` targets `t_body` and `t_head`.
+- `--player-side t` targets `ct_body` and `ct_head`.
+- Only head classes can trigger `--hid-click`.
 
-## Windows Mouse Acceleration
+## Windows Pointer Settings
 
-The RP2350 firmware sends standard relative USB HID mouse reports. It does not
-apply a pointer curve. The calibration mode reads and prints Windows pointer
-thresholds, acceleration state, and pointer speed through `SystemParametersInfo`
-but does not modify them. If the target program consumes normal Windows pointer
-movement, those settings can affect movement. If the target program consumes Raw
-Input, OS pointer acceleration is typically bypassed and the result is dominated
-by HID counts and in-application sensitivity.
+The RP2350 firmware emits standard relative USB HID mouse reports. It does not
+apply a pointer curve. Calibration reads and prints Windows pointer thresholds,
+acceleration state, and pointer speed through `SystemParametersInfo`, but it
+does not modify those settings.
 
-Tune `--hid-gain`, `--hid-max-step`, and `--hid-deadzone` for the actual
-environment. Use `--calibrate-hid` to capture text samples that pair HID counts
-with observed DXGI frame shift and to generate a fitted config file.
+If the target application consumes normal Windows pointer movement, pointer
+speed and Enhance Pointer Precision can affect motion. If it consumes Raw Input,
+movement is usually dominated by HID counts and in-application sensitivity.
 
-## Hardware Calibration Checklist
+Tune these values on the actual target machine:
 
-1. Confirm the board appears as a COM port.
-2. Run `--dry-run --preview` on a representative video.
-3. Run live movement without `--hid-click`.
-4. Start with a low gain such as `--hid-gain 0.25`.
-5. Run `--calibrate-hid` and inspect the generated `hid-tuned.cfg`.
-6. Increase or reduce `hid_gain` until the filtered target point converges
-   without oscillation.
-7. Reduce `hid_max_step` if movement jumps too far per frame.
-8. Enable `--hid-click` only after movement is stable.
-9. If movement differs between desktop and the target application, treat that as
-   a Raw Input or pointer-acceleration difference and calibrate gain for the
-   target application.
+```text
+--hid-gain
+--hid-max-step
+--hid-deadzone
+```
+
+## CLI Help
+
+```powershell
+xmake run vision_analyzer --help
+```
