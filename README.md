@@ -451,3 +451,6 @@ Return codes:
 ```
 
 The main Python repository wraps this DLL with `cs2_vision_runtime.VisionRuntime`.
+Any wrapper that needs live HID output must bind and call
+`va_set_output_enabled`; an older wrapper remains safely disarmed even though
+`va_process_next` continues returning planned actions.
