@@ -25,6 +25,8 @@
 - `packaging/sm61/package/scripts/setup-and-test.ps1`: one-click orchestration and Chinese PASS/FAIL summary.
 - `packaging/sm61/package/一键检查并测试.cmd`: double-click entry point.
 - `packaging/sm61/package/README_中文.md`: production-machine instructions and expected first-run behavior.
+- `include/vision_analyzer/runtime_status.hpp` and `src/runtime_status.cpp`: stable CLI status formatting with FPS and stage timings consumed by production diagnostics.
+- `src/main.cpp` and `tests/test_algorithms.cpp`: emit and verify parseable per-frame performance fields.
 - `.gitignore`: exclude local archive cache and generated staging/output.
 
 ### Task 1: Add tested package primitives
@@ -261,6 +263,47 @@ Expected: `PASS package tool tests` with all safety assertions passing.
 ```powershell
 git add packaging/sm61/package packaging/sm61/tests/run-tests.ps1
 git commit -m "feat: add safe one-click production diagnostics"
+```
+
+### Task 3A: Expose parseable CLI performance metrics
+
+**Files:**
+- Create: `include/vision_analyzer/runtime_status.hpp`
+- Create: `src/runtime_status.cpp`
+- Modify: `src/main.cpp`
+- Modify: `tests/test_algorithms.cpp`
+- Modify: `xmake.lua`
+- Modify: `CMakeLists.txt`
+
+- [ ] **Step 1: Add a failing formatter test**
+
+Construct a `RuntimeStepResult` with known FPS and preprocessing, inference,
+postprocessing, total, detection, target, action, and lock values. Require one
+stable line containing `fps=123.46`, `preprocess_ms=1.25`,
+`inference_ms=4.50`, `postprocess_ms=0.75`, and `total_ms=6.50`.
+
+- [ ] **Step 2: Run the algorithm tests and confirm the formatter is missing**
+
+Run `xmake build -P . vision_analyzer_tests`. Expected: compilation fails
+because `runtime_status.hpp` or `format_runtime_status` does not exist.
+
+- [ ] **Step 3: Implement the formatter and use it in the CLI**
+
+Add the formatter to both core source lists and replace the ad-hoc status output
+in `main.cpp`. Preserve existing frame/detection/action fields while adding
+fixed two-decimal `fps`, preprocessing, inference, postprocessing, and total
+milliseconds in the token order consumed by `test-video.ps1`.
+
+- [ ] **Step 4: Run algorithm, C API, and packaging tests**
+
+Expected: all three suites pass and the formatter test proves the CLI/package
+contract.
+
+- [ ] **Step 5: Commit the CLI metric contract**
+
+```powershell
+git add include/vision_analyzer/runtime_status.hpp src/runtime_status.cpp src/main.cpp tests/test_algorithms.cpp xmake.lua CMakeLists.txt docs/superpowers/plans/2026-07-21-sm61-portable-runtime-package.md
+git commit -m "feat: expose parseable runtime timing metrics"
 ```
 
 ### Task 4: Implement and test the package builder

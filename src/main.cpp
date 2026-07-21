@@ -28,6 +28,7 @@
 #include "vision_analyzer/runtime.hpp"
 #include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/runtime_session.hpp"
+#include "vision_analyzer/runtime_status.hpp"
 #include "vision_analyzer/tracking.hpp"
 
 #if defined(_WIN32)
@@ -344,14 +345,7 @@ void run(const Options& options, const std::atomic_bool* stop_requested) {
 
         const int processed_index = session.processed_frames() - 1;
         if (processed_index % options.status_every_frames == 0) {
-            std::cout << "frame=" << step.report.frame_index
-                      << " det=" << step.report.detection_count
-                      << " target=" << (step.command.has_target ? 1 : 0)
-                      << " dx=" << step.command.dx
-                      << " dy=" << step.command.dy
-                      << " click=" << (step.command.click_left ? 1 : 0)
-                      << " lock=" << lock_state_name(step.command.lock_state)
-                      << '\n';
+            std::cout << format_runtime_status(step) << '\n';
         }
 
         if (options.preview) {

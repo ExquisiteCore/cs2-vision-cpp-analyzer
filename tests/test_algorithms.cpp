@@ -18,6 +18,7 @@
 #include "vision_analyzer/postprocess.hpp"
 #include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/runtime_session.hpp"
+#include "vision_analyzer/runtime_status.hpp"
 #include "vision_analyzer/tensorrt_provider_config.hpp"
 #include "vision_analyzer/tracking.hpp"
 
@@ -801,6 +802,26 @@ void test_runtime_session_starts_closed() {
     require(session.input_name().empty(), "closed runtime session should not report an input");
 }
 
+void test_runtime_status_includes_parseable_timing_metrics() {
+    RuntimeStepResult step;
+    step.frame_available = true;
+    step.report.frame_index = 7;
+    step.report.fps = 123.456;
+    step.report.timing = InferenceTiming{1.25, 4.50, 0.75};
+    step.report.detection_count = 3;
+    step.command = AimCommand{true, -4, 5, false, LockState::Tracking};
+
+    const std::string status = format_runtime_status(step);
+    require(status.find("frame=7") != std::string::npos, "runtime status should include frame index");
+    require(status.find("fps=123.46") != std::string::npos, "runtime status should include fixed FPS");
+    require(status.find("preprocess_ms=1.25") != std::string::npos, "runtime status should include preprocessing time");
+    require(status.find("inference_ms=4.50") != std::string::npos, "runtime status should include inference time");
+    require(status.find("postprocess_ms=0.75") != std::string::npos, "runtime status should include postprocessing time");
+    require(status.find("total_ms=6.50") != std::string::npos, "runtime status should include total processing time");
+    require(status.find("det=3 target=1 dx=-4 dy=5 click=0 lock=tracking") != std::string::npos,
+            "runtime status should preserve action fields");
+}
+
 }  // namespace
 
 int main() {
@@ -842,6 +863,7 @@ int main() {
         test_aim_controller_respects_click_cooldown();
         test_hid_action_sender_requires_arming_and_stops_when_disarmed();
         test_runtime_session_starts_closed();
+        test_runtime_status_includes_parseable_timing_metrics();
         std::cout << "algorithm tests passed\n";
         return 0;
     } catch (const std::exception& error) {

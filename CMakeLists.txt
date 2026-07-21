@@ -38,6 +38,7 @@ set(VISION_ANALYZER_CORE_SOURCES
     src/runtime_config.cpp
     src/runtime_options.cpp
     src/runtime_session.cpp
+    src/runtime_status.cpp
     src/tensorrt_provider_config.cpp
     src/tracking.cpp
     src/types.cpp
