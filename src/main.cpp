@@ -157,6 +157,8 @@ namespace vision_analyzer {
             options.preview = true;
         } else if (key == "--dry-run") {
             options.dry_run = true;
+        } else if (key == "--output-enabled") {
+            options.output_enabled = true;
         } else if (key == "--status-every") {
             options.status_every_frames = std::stoi(require_value(key));
         } else if (key == "--help" || key == "-h") {
@@ -190,6 +192,7 @@ namespace vision_analyzer {
                 << "  --action-log PATH write per-frame planned movement/click commands to a text file\n"
                 << "  --player-side SIDE  unknown, ct, or t; ct targets T classes, t targets CT classes\n"
                 << "  --dry-run         run detection and planning without SDK output\n"
+                << "  --output-enabled  arm RP2350 output immediately after opening\n"
                 << "  --status-every N  print one status line every N processed frames, default 30\n"
                 << "  --conf 0.25       confidence threshold\n"
                 << "  --nms 0.45        NMS threshold\n"

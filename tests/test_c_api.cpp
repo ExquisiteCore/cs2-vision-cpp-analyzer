@@ -33,6 +33,8 @@ void test_setters_accept_valid_values() {
     require(va_set_player_side(runtime, "ct") == 0, "set player side should succeed");
     require(va_set_hid_port(runtime, "COM3") == 0, "set HID port should succeed");
     require(va_set_dry_run(runtime, 1) == 0, "set dry-run should succeed");
+    require(va_set_output_enabled(runtime, 1) == 0, "arming output should succeed");
+    require(va_set_output_enabled(runtime, 0) == 0, "disarming output should succeed");
     require(va_set_hid_click(runtime, 1, 6) == 0, "set HID click should succeed");
     require(va_set_hid_tuning(runtime, 0.5F, 80, 2.0F) == 0, "set HID tuning should succeed");
     require(va_set_thresholds(runtime, 0.25F, 0.45F) == 0, "set thresholds should succeed");

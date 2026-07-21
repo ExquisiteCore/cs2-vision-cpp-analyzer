@@ -1,7 +1,9 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include "vision_analyzer/aim_controller.hpp"
@@ -21,11 +23,14 @@ class HidActionSender {
 public:
     explicit HidActionSender(HidClient& client);
 
+    void set_enabled(bool enabled);
     void execute(const AimCommand& command);
     void stop_all();
 
 private:
     HidClient& client_;
+    std::atomic_bool enabled_{false};
+    std::mutex output_mutex_;
 };
 
 [[nodiscard]] std::unique_ptr<HidClient> create_rp2350_hid_client(const std::string& port);

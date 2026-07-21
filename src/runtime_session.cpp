@@ -51,6 +51,7 @@ void RuntimeSession::open(const Options& options) {
     if (!options_.dry_run) {
         hid_client_ = create_rp2350_hid_client(options_.hid_port);
         hid_sender_ = std::make_unique<HidActionSender>(*hid_client_);
+        hid_sender_->set_enabled(options_.output_enabled);
         std::cout << "hid_port=" << options_.hid_port
                   << " hid_gain=" << options_.hid_move_gain
                   << " hid_max_step=" << options_.hid_max_step
@@ -154,6 +155,13 @@ RuntimeStepResult RuntimeSession::process_next() {
 
     ++processed_index_;
     return result;
+}
+
+void RuntimeSession::set_output_enabled(bool enabled) {
+    options_.output_enabled = enabled;
+    if (hid_sender_) {
+        hid_sender_->set_enabled(enabled);
+    }
 }
 
 void RuntimeSession::stop_all() {

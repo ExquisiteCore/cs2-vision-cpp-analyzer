@@ -95,6 +95,8 @@ void apply_entry(Options& options, const std::string& key, const std::string& va
         options.player_side = parse_player_side(value);
     } else if (key == "dry_run") {
         options.dry_run = parse_bool(value);
+    } else if (key == "output_enabled") {
+        options.output_enabled = parse_bool(value);
     } else if (key == "status_every" || key == "status_every_frames") {
         options.status_every_frames = std::stoi(value);
     } else if (key == "backend") {

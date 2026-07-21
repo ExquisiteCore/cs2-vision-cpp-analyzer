@@ -85,6 +85,7 @@ struct Options {
     std::string tensorrt_cache_path = "ort-trt-cache-sm61-fp32";
     PlayerSide player_side = PlayerSide::Unknown;
     bool dry_run = false;
+    bool output_enabled = false;
     int status_every_frames = 30;
     Backend backend = Backend::OrtTensorRt;
     float confidence = 0.25F;

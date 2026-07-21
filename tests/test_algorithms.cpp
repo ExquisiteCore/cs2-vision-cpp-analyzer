@@ -147,6 +147,7 @@ void test_runtime_defaults_to_sm61_tensorrt() {
     const Options options;
 
     require(options.backend == Backend::OrtTensorRt, "runtime should default to ORT TensorRT");
+    require(!options.output_enabled, "RP2350 output should start disabled");
     require(
         options.tensorrt_cache_path == "ort-trt-cache-sm61-fp32",
         "runtime should have a writable relative cache default"
@@ -659,6 +660,7 @@ void test_runtime_config_file_overrides_tuning_and_io() {
                << "dxgi_roi_width=800\n"
                << "dxgi_roi_height=600\n"
                << "tensorrt_cache_path=cache-from-config\n"
+               << "output_enabled=true\n"
                << "hid_gain=0.5\n"
                << "hid_deadzone_px=2.5\n"
                << "body_head_anchor_ratio=0.22\n"
@@ -683,6 +685,7 @@ void test_runtime_config_file_overrides_tuning_and_io() {
         "config should set DXGI ROI"
     );
     require(options.tensorrt_cache_path == "cache-from-config", "config should set TensorRT cache path");
+    require(options.output_enabled, "config should enable RP2350 output");
     require_near(options.hid_move_gain, 0.5F, 0.001F, "config should set HID gain");
     require_near(options.hid_deadzone_px, 2.5F, 0.001F, "config should set HID deadzone");
     require_near(options.tuning.body_head_anchor_ratio, 0.22F, 0.001F, "config should set body anchor ratio");
@@ -754,30 +757,39 @@ public:
     }
 
     void stop_all() override {
-        stopped = true;
+        ++stop_calls;
     }
 
     std::vector<std::pair<std::int16_t, std::int16_t>> moves;
     int left_clicks = 0;
-    bool stopped = false;
+    int stop_calls = 0;
 };
 
-void test_hid_action_sender_executes_aim_command() {
+void test_hid_action_sender_requires_arming_and_stops_when_disarmed() {
     RecordingHidClient client;
     HidActionSender sender(client);
-
-    sender.execute(AimCommand{
+    const AimCommand command{
         true,
         12,
         -5,
         true,
         LockState::Locked,
-    });
+    };
+
+    sender.execute(command);
+    require(client.moves.empty(), "disarmed sender must suppress movement");
+    require(client.left_clicks == 0, "disarmed sender must suppress clicks");
+
+    sender.set_enabled(true);
+    sender.execute(command);
 
     require(client.moves.size() == 1, "HID sender should emit one relative move");
     require(client.moves[0].first == 12, "HID sender should forward x movement");
     require(client.moves[0].second == -5, "HID sender should forward y movement");
     require(client.left_clicks == 1, "HID sender should forward click command");
+
+    sender.set_enabled(false);
+    require(client.stop_calls == 1, "disarming should immediately stop RP2350 state");
 }
 
 void test_runtime_session_starts_closed() {
@@ -828,7 +840,7 @@ int main() {
         test_runtime_config_file_overrides_tuning_and_io();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
-        test_hid_action_sender_executes_aim_command();
+        test_hid_action_sender_requires_arming_and_stops_when_disarmed();
         test_runtime_session_starts_closed();
         std::cout << "algorithm tests passed\n";
         return 0;

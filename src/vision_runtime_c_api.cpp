@@ -155,6 +155,16 @@ int32_t va_set_dry_run(VaRuntime* runtime, int32_t dry_run) {
     });
 }
 
+int32_t va_set_output_enabled(VaRuntime* runtime, int32_t enabled) {
+    return call_api(runtime, [&] {
+        const bool output_enabled = enabled != 0;
+        runtime->options.output_enabled = output_enabled;
+        if (runtime->session.is_open()) {
+            runtime->session.set_output_enabled(output_enabled);
+        }
+    });
+}
+
 int32_t va_set_hid_click(VaRuntime* runtime, int32_t enabled, int32_t cooldown_frames) {
     return call_api(runtime, [&] {
         if (cooldown_frames < 0) {

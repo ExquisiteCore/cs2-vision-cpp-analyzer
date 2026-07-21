@@ -47,8 +47,17 @@ private:
 HidActionSender::HidActionSender(HidClient& client)
     : client_(client) {}
 
+void HidActionSender::set_enabled(bool enabled) {
+    std::scoped_lock lock(output_mutex_);
+    enabled_.store(enabled);
+    if (!enabled) {
+        client_.stop_all();
+    }
+}
+
 void HidActionSender::execute(const AimCommand& command) {
-    if (!command.has_target) {
+    std::scoped_lock lock(output_mutex_);
+    if (!enabled_.load() || !command.has_target) {
         return;
     }
 
@@ -62,6 +71,7 @@ void HidActionSender::execute(const AimCommand& command) {
 }
 
 void HidActionSender::stop_all() {
+    std::scoped_lock lock(output_mutex_);
     client_.stop_all();
 }
 

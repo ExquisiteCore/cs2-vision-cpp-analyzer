@@ -36,6 +36,7 @@ public:
 
     void open(const Options& options);
     [[nodiscard]] RuntimeStepResult process_next();
+    void set_output_enabled(bool enabled);
     void stop_all();
     void close();
 
