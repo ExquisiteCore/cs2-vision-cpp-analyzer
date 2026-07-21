@@ -329,6 +329,7 @@ try {
             Assert-True ($video.Contains($token)) "video test must contain $token"
         }
         Assert-True ($video -notmatch '(?i)--hid-port') 'video smoke test must not select an HID port'
+        Assert-True ($video -notmatch 'Collections\.Generic\.List\[object\]') 'video results must use Windows PowerShell 5.1-compatible arrays'
 
         $setup = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\setup-and-test.ps1') -Raw
         Assert-True ($setup -notmatch '(?i)test-dxgi\.ps1') 'one-click setup must not run DXGI automatically'

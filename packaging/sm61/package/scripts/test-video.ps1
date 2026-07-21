@@ -15,7 +15,7 @@ $model = Join-Path $root 'model\best.onnx'
 $schema = Join-Path $root 'model\best.onnx.schema.json'
 $sample = Join-Path $root 'samples\smoke-test.mp4'
 $cache = Join-Path $root 'cache\ort-trt-sm61-fp32'
-$results = New-Object Collections.Generic.List[object]
+$results = @()
 
 Assert-RequiredRuntimeFiles
 for ($pass = 1; $pass -le $PassCount; $pass++) {
@@ -54,7 +54,7 @@ for ($pass = 1; $pass -le $PassCount; $pass++) {
         throw "CLI 没有输出 FPS/阶段耗时，日志=$logPath"
     }
     $last = $timing[$timing.Count - 1]
-    $results.Add([pscustomobject]@{
+    $results += [pscustomobject]@{
         Pass = $pass
         ElapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 3)
         Fps = [double]$last.Groups['fps'].Value
@@ -63,7 +63,7 @@ for ($pass = 1; $pass -le $PassCount; $pass++) {
         PostprocessMs = [double]$last.Groups['post'].Value
         TotalMs = [double]$last.Groups['total'].Value
         LogPath = $logPath
-    })
+    }
 }
 
 $cacheFiles = @(Get-ChildItem -LiteralPath $cache -File -Recurse | Where-Object { $_.Length -gt 0 })
