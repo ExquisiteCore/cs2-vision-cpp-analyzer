@@ -340,6 +340,8 @@ try {
         New-EmptyFile (Join-Path $source 'cuda-package\include\must-not-copy.dll')
         [IO.File]::WriteAllText((Join-Path $source 'cuda-package\LICENSE.txt'), 'license text')
         [IO.File]::WriteAllText((Join-Path $source 'cuda-package\ThirdPartyNotices.txt'), 'third-party notice')
+        New-Item -ItemType Directory -Path (Join-Path $source 'cuda-package\doc') -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $source 'cuda-package\doc\Acknowledgements.txt'), 'acknowledgements')
         Compress-Archive -Path (Join-Path $source '*') -DestinationPath $archive -Force
 
         $expanded = Join-Path $testRoot 'archive-expanded'
@@ -353,6 +355,7 @@ try {
         Copy-ComponentLicenses -ExtractedRoot $expanded -DestinationPath $licenseDestination
         Assert-True (Test-Path -LiteralPath (Join-Path $licenseDestination 'LICENSE.txt')) 'component license must be preserved'
         Assert-True (Test-Path -LiteralPath (Join-Path $licenseDestination 'ThirdPartyNotices.txt')) 'third-party notice must be preserved'
+        Assert-True (Test-Path -LiteralPath (Join-Path $licenseDestination 'Acknowledgements.txt')) 'component acknowledgements must be preserved'
     }
 
     Invoke-Test 'TensorRT runtime copy uses lib DLLs and ignores import libraries' {

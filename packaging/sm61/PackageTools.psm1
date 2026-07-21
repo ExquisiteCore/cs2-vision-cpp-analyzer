@@ -370,7 +370,8 @@ function Copy-ComponentLicenses {
     $licenses = @(
         Get-ChildItem -LiteralPath $ExtractedRoot -File -Recurse | Where-Object {
             $_.Name -match '^(LICENSE|NOTICE|EULA)(\..*)?$' -or
-            $_.Name -match '^ThirdPartyNotices?(\..*)?$'
+            $_.Name -match '^ThirdPartyNotices?(\..*)?$' -or
+            $_.Name -match '^Acknowledgements?(\..*)?$'
         } | Sort-Object FullName
     )
     if ($licenses.Count -eq 0) {
