@@ -240,6 +240,62 @@ try {
             }
         }
     }
+
+    Invoke-Test 'package templates exist and safe defaults are fixed' {
+        $templateRoot = Join-Path (Join-Path $PSScriptRoot '..') 'package'
+        $required = @(
+            'config/runtime-sm61.cfg',
+            'scripts/common.ps1',
+            'scripts/verify-runtime.ps1',
+            'scripts/test-video.ps1',
+            'scripts/test-dxgi.ps1',
+            'scripts/collect-diagnostics.ps1',
+            'scripts/setup-and-test.ps1',
+            (([string][char]0x4E00) + [char]0x952E + [char]0x68C0 + [char]0x67E5 + [char]0x5E76 + [char]0x6D4B + [char]0x8BD5 + '.cmd'),
+            ('README_' + [char]0x4E2D + [char]0x6587 + '.md')
+        )
+        foreach ($relative in $required) {
+            $path = Join-Path $templateRoot $relative.Replace('/', '\')
+            Assert-True (Test-Path -LiteralPath $path -PathType Leaf) "required package template is missing: $relative"
+        }
+
+        $config = Get-Content -LiteralPath (Join-Path $templateRoot 'config\runtime-sm61.cfg') -Raw
+        Assert-True ($config -match '(?m)^backend=ort-tensorrt\s*$') 'TensorRT must be the config backend'
+        Assert-True ($config -match '(?m)^tensorrt_cache_path=cache/ort-trt-sm61-fp32\s*$') 'cache path must be package-relative'
+        Assert-True ($config -match '(?m)^output_enabled=false\s*$') 'output must default disabled'
+        Assert-True ($config -match '(?m)^input=dxgi\s*$') 'DXGI must remain the live input default'
+
+        $scriptFiles = @(Get-ChildItem -LiteralPath $templateRoot -File -Recurse | Where-Object { $_.Extension -in @('.ps1', '.cmd') })
+        $scriptText = ($scriptFiles | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+        Assert-True ($scriptText -notmatch '(?i)--output-enabled') 'package scripts must never arm HID output'
+        Assert-True ($scriptText -notmatch '(?im)\bsetx(?:\.exe)?\b') 'package scripts must not persist PATH or variables'
+        Assert-True ($scriptText -notmatch '(?i)HKLM:|HKCU:|New-ItemProperty|Set-ItemProperty') 'package scripts must not write the registry'
+
+        $video = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\test-video.ps1') -Raw
+        foreach ($token in @('--dry-run', '--max-frames', '--model', '--schema', '--tensorrt-cache-path', '--backend')) {
+            Assert-True ($video.Contains($token)) "video test must contain $token"
+        }
+        Assert-True ($video -notmatch '(?i)--hid-port') 'video smoke test must not select an HID port'
+
+        $setup = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\setup-and-test.ps1') -Raw
+        Assert-True ($setup -notmatch '(?i)test-dxgi\.ps1') 'one-click setup must not run DXGI automatically'
+
+        $cmdName = ([string][char]0x4E00) + [char]0x952E + [char]0x68C0 + [char]0x67E5 + [char]0x5E76 + [char]0x6D4B + [char]0x8BD5 + '.cmd'
+        $cmd = Get-Content -LiteralPath (Join-Path $templateRoot $cmdName) -Raw
+        Assert-True ($cmd.Contains('%~dp0')) 'CMD launcher must resolve its own directory'
+        Assert-True ($cmd -match '(?i)-ExecutionPolicy\s+Bypass') 'CMD launcher must use process-scoped policy bypass'
+        Assert-True ($cmd -match '(?i)setup-and-test\.ps1') 'CMD launcher must invoke the orchestrator'
+    }
+
+    Invoke-Test 'PowerShell package templates parse under Windows PowerShell' {
+        $templateRoot = Join-Path (Join-Path $PSScriptRoot '..') 'package'
+        foreach ($file in @(Get-ChildItem -LiteralPath (Join-Path $templateRoot 'scripts') -File -Filter '*.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
+            Assert-Equal 0 @($errors).Count "PowerShell syntax errors in $($file.Name): $($errors -join '; ')"
+        }
+    }
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
