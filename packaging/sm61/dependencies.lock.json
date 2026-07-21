@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "profile": "sm61-ort1173-trt861-fp32",
+  "components": [
+    {
+      "id": "onnxruntime-gpu",
+      "version": "1.17.3",
+      "sourceMode": "public",
+      "archive": "onnxruntime-win-x64-gpu-1.17.3.zip",
+      "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.17.3/onnxruntime-win-x64-gpu-1.17.3.zip",
+      "size": 201146337,
+      "sha256": "82D545BBCDE0976ED3A1BFE44F4DF27721975DCD806AB312C37F05A16C52ACED"
+    },
+    {
+      "id": "cuda-cudart",
+      "version": "11.8.89",
+      "sourceMode": "public",
+      "archive": "cuda_cudart-windows-x86_64-11.8.89-archive.zip",
+      "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-11.8.89-archive.zip",
+      "size": 2987306,
+      "sha256": "988CC9E7D3785D4B1975521F312C57C6814CBF15E73A2B7941D961835F2A945E"
+    },
+    {
+      "id": "cuda-cublas",
+      "version": "11.11.3.6",
+      "sourceMode": "public",
+      "archive": "libcublas-windows-x86_64-11.11.3.6-archive.zip",
+      "url": "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-11.11.3.6-archive.zip",
+      "size": 420850025,
+      "sha256": "67B0934A6359E4EE26FFF823C356021589D392C4FD49CA12624F570EDC08E2B9"
+    },
+    {
+      "id": "cuda-cufft",
+      "version": "10.9.0.58",
+      "sourceMode": "public",
+      "archive": "libcufft-windows-x86_64-10.9.0.58-archive.zip",
+      "url": "https://developer.download.nvidia.com/compute/cuda/redist/libcufft/windows-x86_64/libcufft-windows-x86_64-10.9.0.58-archive.zip",
+      "size": 168982770,
+      "sha256": "A4071A85E3983BF42EA7A2E9BEBE3B0B3C9AC258668580ADC32EE1C385F7556F"
+    },
+    {
+      "id": "cuda-nvrtc",
+      "version": "11.8.89",
+      "sourceMode": "public",
+      "archive": "cuda_nvrtc-windows-x86_64-11.8.89-archive.zip",
+      "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/windows-x86_64/cuda_nvrtc-windows-x86_64-11.8.89-archive.zip",
+      "size": 95854990,
+      "sha256": "E5D571247E71E0B0922A929516175844EFA9E7AC424ED3C1B764BFFB4899D3C9"
+    },
+    {
+      "id": "cudnn",
+      "version": "8.9.7.29",
+      "sourceMode": "public",
+      "archive": "cudnn-windows-x86_64-8.9.7.29_cuda11-archive.zip",
+      "url": "https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-8.9.7.29_cuda11-archive.zip",
+      "size": 704240064,
+      "sha256": "5E45478EFE71A96329E6C0D2A3A2F79C747C15B2A51FEAD4B84C89B02CBF1671"
+    },
+    {
+      "id": "tensorrt",
+      "version": "8.6.1.6",
+      "sourceMode": "authenticated-manual",
+      "archive": "TensorRT-8.6.1.6.Windows10.x86_64.cuda-11.8.zip",
+      "url": "https://developer.nvidia.com/nvidia-tensorrt-8x-download",
+      "validation": "version-header-and-required-dlls"
+    },
+    {
+      "id": "msvc-crt",
+      "version": "14.x-v143",
+      "sourceMode": "local-visual-studio-redist",
+      "validation": "required-dlls-and-manifest-hashes"
+    }
+  ]
+}

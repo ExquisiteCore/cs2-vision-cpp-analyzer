@@ -198,6 +198,48 @@ try {
         )
         Assert-Equal ($expected -join '|') ($actual -join '|') 'runtime path precedence'
     }
+
+    Invoke-Test 'dependency lock is complete and uses approved sources' {
+        $lockPath = Join-Path (Join-Path $PSScriptRoot '..') 'dependencies.lock.json'
+        Assert-True (Test-Path -LiteralPath $lockPath -PathType Leaf) 'dependencies.lock.json must exist'
+        $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
+
+        Assert-Equal 1 $lock.schemaVersion 'dependency lock schema'
+        Assert-Equal 'sm61-ort1173-trt861-fp32' $lock.profile 'dependency profile'
+
+        $expectedIds = @(
+            'cuda-cublas',
+            'cuda-cudart',
+            'cuda-cufft',
+            'cuda-nvrtc',
+            'cudnn',
+            'msvc-crt',
+            'onnxruntime-gpu',
+            'tensorrt'
+        )
+        $actualIds = @($lock.components | ForEach-Object { [string]$_.id } | Sort-Object)
+        Assert-Equal ($expectedIds -join '|') ($actualIds -join '|') 'locked component IDs'
+        Assert-Equal $actualIds.Count @($actualIds | Select-Object -Unique).Count 'component IDs must be unique'
+
+        $approvedHosts = @('github.com', 'developer.download.nvidia.com', 'developer.nvidia.com')
+        foreach ($component in @($lock.components)) {
+            if ($component.sourceMode -eq 'public') {
+                $uri = New-Object Uri([string]$component.url)
+                Assert-Equal 'https' $uri.Scheme "public source must use HTTPS: $($component.id)"
+                Assert-True ($approvedHosts -contains $uri.Host) "unapproved source host for $($component.id): $($uri.Host)"
+                Assert-True ([string]$component.sha256 -match '^[0-9A-F]{64}$') "public archive must have uppercase SHA256: $($component.id)"
+                Assert-True (-not [string]::IsNullOrWhiteSpace([string]$component.archive)) "public archive name is required: $($component.id)"
+            } elseif ($component.sourceMode -eq 'authenticated-manual') {
+                Assert-Equal 'tensorrt' ([string]$component.id) 'only TensorRT may require authenticated manual download'
+                Assert-Equal 'TensorRT-8.6.1.6.Windows10.x86_64.cuda-11.8.zip' ([string]$component.archive) 'TensorRT archive name'
+                Assert-Equal 'version-header-and-required-dlls' ([string]$component.validation) 'TensorRT validation policy'
+            } elseif ($component.sourceMode -eq 'local-visual-studio-redist') {
+                Assert-Equal 'msvc-crt' ([string]$component.id) 'only MSVC CRT may use local redistributable files'
+            } else {
+                throw "ASSERT: unsupported sourceMode for $($component.id): $($component.sourceMode)"
+            }
+        }
+    }
 } finally {
     if (Test-Path -LiteralPath $testRoot) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
