@@ -1,4 +1,4 @@
-# CS2 Vision C++ Runtime Controller
+# CS2 Vision C++ Runtime
 
 This repository contains the C++ runtime side of the CS2 vision project. The
 Python project trains and exports YOLO models. This runtime loads the exported
@@ -7,9 +7,18 @@ targets, fuses body/head detections, tracks the selected target, filters and
 predicts the aim point, then plans bounded relative mouse movement through the
 RP2350 HID bridge SDK.
 
-The maintained entry point is `vision_analyzer.exe`. The old UI integration is
-kept as archived code only; normal validation and usage should go through the
-CLI.
+The primary product is `vision_runtime.dll`, which exposes the stable C API in
+`include/vision_analyzer/vision_runtime_c_api.h`. `vision_analyzer.exe` is an
+optional diagnostic CLI for model, video, DXGI, calibration, and end-to-end
+runtime validation. No graphical UI is built or required.
+
+Build artifacts:
+
+```text
+vision_runtime.dll  primary runtime library and C API implementation
+vision_runtime.lib  MSVC import library for native consumers
+vision_analyzer.exe optional diagnostic CLI
+```
 
 ## Requirements
 
@@ -18,6 +27,7 @@ Windows build requirements:
 ```text
 Visual Studio 2022 Build Tools with MSVC
 xmake
+CMake 3.14+ (when using the CMake build)
 Git
 ```
 
@@ -41,7 +51,7 @@ TensorRT through ONNX Runtime TensorRT Execution Provider
 The stable default backend is `opencv-onnx`. It runs without ONNX Runtime,
 CUDA, or TensorRT.
 
-## Build
+## Build with xmake
 
 From this repository:
 
@@ -49,6 +59,7 @@ From this repository:
 xmake f -m release
 xmake
 xmake run vision_analyzer_tests
+xmake run vision_runtime_c_api_tests
 ```
 
 From the parent repository:
@@ -58,6 +69,7 @@ cd tools\cpp_analyzer
 xmake f -m release
 xmake
 xmake run vision_analyzer_tests
+xmake run vision_runtime_c_api_tests
 ```
 
 The parent repository layout is automatically supported. If the SDK is elsewhere,
@@ -76,28 +88,50 @@ xmake f -m release --onnxruntime_root=$env:ONNXRUNTIME_ROOT --hid_sdk_root=..\rp
 xmake
 ```
 
-The executable is generated under:
-
-```text
-build\windows\x64\release\vision_analyzer.exe
-```
-
-Build the reusable DLL:
-
-```powershell
-xmake build vision_runtime
-xmake run vision_runtime_c_api_tests
-```
-
-DLL outputs:
+Primary DLL outputs:
 
 ```text
 build\windows\x64\release\vision_runtime.dll
 build\windows\x64\release\vision_runtime.lib
 ```
 
+The optional diagnostic executable is generated under:
+
+```text
+build\windows\x64\release\vision_analyzer.exe
+```
+
+To build only the reusable DLL and its API test:
+
+```powershell
+xmake build vision_runtime
+xmake run vision_runtime_c_api_tests
+```
+
 Use `xmake run` when possible. It sets runtime DLL search paths for dependencies
 resolved by this project.
+
+## Build with CMake
+
+The CMake build produces the same core library, DLL, CLI, and test targets and
+does not require any UI framework:
+
+```powershell
+cmake -S . -B build-cmake -A x64
+cmake --build build-cmake --config Release
+ctest --test-dir build-cmake -C Release --output-on-failure
+```
+
+CMake outputs are generated under:
+
+```text
+build-cmake\Release\vision_runtime.dll
+build-cmake\Release\vision_runtime.lib
+build-cmake\Release\vision_analyzer.exe
+```
+
+Set `ONNXRUNTIME_ROOT` or `RP2350_HID_BRIDGE_SDK` before configuring CMake when
+those optional integrations are installed outside the default sibling layout.
 
 ## Model Contract
 
