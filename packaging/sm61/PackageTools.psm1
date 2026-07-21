@@ -79,7 +79,7 @@ function Test-PackageManifest {
         throw "Package manifest is missing: $manifestPath"
     }
 
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($manifest.schemaVersion -ne 1) {
         throw "Unsupported package manifest schema: $($manifest.schemaVersion)"
     }

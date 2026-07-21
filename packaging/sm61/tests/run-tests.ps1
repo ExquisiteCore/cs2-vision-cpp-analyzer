@@ -85,6 +85,8 @@ try {
         $root = Join-Path $testRoot 'manifest'
         New-Item -ItemType Directory -Path (Join-Path $root 'app') -Force | Out-Null
         [IO.File]::WriteAllText((Join-Path $root 'app\probe.txt'), 'known-content')
+        $unicodeName = 'README_' + [char]0x4E2D + [char]0x6587 + '.md'
+        [IO.File]::WriteAllText((Join-Path $root $unicodeName), 'unicode-path')
 
         Write-PackageManifest -PackageRoot $root -Profile 'sm61-test' -Components @(
             [pscustomobject]@{ id = 'fixture'; version = '1.0' }
@@ -102,6 +104,22 @@ try {
         [IO.File]::WriteAllText((Join-Path $root 'app\extra.txt'), 'unexpected')
         $unexpected = Test-PackageManifest -PackageRoot $root
         Assert-True (@($unexpected.Unexpected) -contains 'app/extra.txt') 'unexpected path must be reported'
+    }
+
+    Invoke-Test 'package-side manifest validates UTF-8 paths under Windows PowerShell' {
+        $root = Join-Path $testRoot 'package-manifest-unicode'
+        $scripts = Join-Path $root 'scripts'
+        New-Item -ItemType Directory -Path $scripts -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path (Join-Path $PSScriptRoot '..') 'package\scripts\common.ps1') -Destination (Join-Path $scripts 'common.ps1')
+        $unicodeName = 'README_' + [char]0x4E2D + [char]0x6587 + '.md'
+        [IO.File]::WriteAllText((Join-Path $root $unicodeName), 'unicode-path')
+        Write-PackageManifest -PackageRoot $root -Profile 'sm61-test' -Components @()
+
+        & {
+            . (Join-Path $scripts 'common.ps1')
+            $result = Test-PackageManifest
+            Assert-True $result.Valid 'package-side validator must preserve UTF-8 manifest paths'
+        }
     }
 
     Invoke-Test 'manifest reports missing immutable files' {

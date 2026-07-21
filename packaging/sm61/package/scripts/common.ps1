@@ -60,7 +60,7 @@ function Test-PackageManifest {
         throw "运行环境清单不存在：$manifestPath"
     }
 
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($manifest.schemaVersion -ne 1) {
         throw "不支持的运行环境清单版本：$($manifest.schemaVersion)"
     }

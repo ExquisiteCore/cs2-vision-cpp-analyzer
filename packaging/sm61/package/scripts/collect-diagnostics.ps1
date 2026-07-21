@@ -15,7 +15,7 @@ $lines.Add("os=$([Environment]::OSVersion.VersionString)")
 $lines.Add("powershell=$($PSVersionTable.PSVersion)")
 
 try {
-    $manifest = Get-Content -LiteralPath (Join-Path $root 'runtime-manifest.json') -Raw | ConvertFrom-Json
+    $manifest = Get-Content -LiteralPath (Join-Path $root 'runtime-manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
     $lines.Add("profile=$($manifest.profile)")
     foreach ($component in @($manifest.components)) {
         $lines.Add("component=$($component.id);version=$($component.version)")

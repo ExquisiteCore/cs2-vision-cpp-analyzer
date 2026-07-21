@@ -291,7 +291,7 @@ try {
         Assert-LeafFile -LiteralPath (Join-Path $OutputRoot $relative) -Description "Packaged runtime '$relative'"
     }
 
-    $manifestComponents = New-Object Collections.Generic.List[object]
+    $manifestComponents = @()
     foreach ($component in @($lock.components)) {
         $copy = $component | ConvertTo-Json -Depth 8 | ConvertFrom-Json
         if ($copy.id -eq 'tensorrt') {
@@ -301,7 +301,7 @@ try {
             $msvcp = Get-Item -LiteralPath (Join-Path $msvcDestination 'MSVCP140.dll')
             $copy | Add-Member -NotePropertyName actualFileVersion -NotePropertyValue $msvcp.VersionInfo.FileVersion
         }
-        $manifestComponents.Add($copy)
+        $manifestComponents += $copy
     }
     Write-PackageManifest -PackageRoot $OutputRoot -Profile $profile -Components @($manifestComponents)
     $manifestResult = Test-PackageManifest -PackageRoot $OutputRoot
