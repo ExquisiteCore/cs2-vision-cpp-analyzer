@@ -15,6 +15,7 @@ public:
 
     [[nodiscard]] virtual DetectionResult detect(const cv::Mat& frame, float confidence, float nms_threshold) = 0;
     [[nodiscard]] virtual std::string name() const = 0;
+    [[nodiscard]] virtual cv::Size input_size() const = 0;
 };
 
 [[nodiscard]] Backend parse_backend(const std::string& value);

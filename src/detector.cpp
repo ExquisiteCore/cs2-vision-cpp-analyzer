@@ -3,6 +3,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <utility>
@@ -14,6 +15,7 @@
 #include <onnxruntime_cxx_api.h>
 #endif
 
+#include "vision_analyzer/model_input.hpp"
 #include "vision_analyzer/postprocess.hpp"
 
 namespace vision_analyzer {
@@ -89,6 +91,10 @@ public:
 
     std::string name() const override {
         return use_cuda_ ? "opencv-cuda" : "opencv-onnx";
+    }
+
+    cv::Size input_size() const override {
+        return {kInputSize, kInputSize};
     }
 
 private:
@@ -185,8 +191,7 @@ public:
     OrtDetector(const std::string& model_path, Backend backend)
         : backend_(backend),
           env_(ORT_LOGGING_LEVEL_WARNING, "vision_analyzer"),
-          session_(nullptr),
-          input_data_(3 * kInputSize * kInputSize) {
+          session_(nullptr) {
         session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         session_options_.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
         session_options_.SetIntraOpNumThreads(1);
@@ -206,23 +211,40 @@ public:
         if (input_names_.empty() || output_names_.empty()) {
             throw std::runtime_error("ORT model has no input or output tensors");
         }
+        if (input_names_.size() != 1) {
+            throw std::runtime_error(
+                "ORT model must have exactly one image input, got " + std::to_string(input_names_.size())
+            );
+        }
+
+        const auto input_info = session_.GetInputTypeInfo(0).GetTensorTypeAndShapeInfo();
+        input_spec_ = parse_model_input_spec(
+            input_info.GetShape(),
+            input_info.GetElementType() == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT
+                ? ModelElementType::Float32
+                : ModelElementType::Unsupported
+        );
+        input_data_.resize(
+            static_cast<std::size_t>(3) *
+            static_cast<std::size_t>(input_spec_.height) *
+            static_cast<std::size_t>(input_spec_.width)
+        );
     }
 
     DetectionResult detect(const cv::Mat& frame, float confidence, float nms_threshold) override {
         const auto preprocess_start = std::chrono::steady_clock::now();
-        const LetterboxResult prepared = letterbox(frame, kInputSize);
+        const LetterboxResult prepared = letterbox(frame, input_size());
         fill_input(prepared.image);
         const auto preprocess_end = std::chrono::steady_clock::now();
 
         const auto inference_start = std::chrono::steady_clock::now();
         auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        std::array<int64_t, 4> input_shape = {1, 3, kInputSize, kInputSize};
         auto input_tensor = Ort::Value::CreateTensor<float>(
             memory_info,
             input_data_.data(),
             input_data_.size(),
-            input_shape.data(),
-            input_shape.size()
+            input_spec_.shape.data(),
+            input_spec_.shape.size()
         );
         auto input_ptrs = name_ptrs(input_names_);
         auto output_ptrs = name_ptrs(output_names_);
@@ -271,13 +293,17 @@ public:
         return backend_ == Backend::OrtTensorRt ? "ort-tensorrt" : "ort-cuda";
     }
 
+    cv::Size input_size() const override {
+        return {input_spec_.width, input_spec_.height};
+    }
+
 private:
     void fill_input(const cv::Mat& image) {
-        const int plane = kInputSize * kInputSize;
-        for (int y = 0; y < kInputSize; ++y) {
+        const int plane = input_spec_.width * input_spec_.height;
+        for (int y = 0; y < input_spec_.height; ++y) {
             const auto* row = image.ptr<cv::Vec3b>(y);
-            for (int x = 0; x < kInputSize; ++x) {
-                const int offset = y * kInputSize + x;
+            for (int x = 0; x < input_spec_.width; ++x) {
+                const int offset = y * input_spec_.width + x;
                 const cv::Vec3b bgr = row[x];
                 input_data_[offset] = static_cast<float>(bgr[2]) / 255.0F;
                 input_data_[plane + offset] = static_cast<float>(bgr[1]) / 255.0F;
@@ -292,6 +318,7 @@ private:
     Ort::Session session_;
     std::vector<std::string> input_names_;
     std::vector<std::string> output_names_;
+    ModelInputSpec input_spec_;
     std::vector<float> input_data_;
 };
 
@@ -308,6 +335,10 @@ public:
 
     std::string name() const override {
         return backend_ == Backend::OrtTensorRt ? "ort-tensorrt-unavailable" : "ort-cuda-unavailable";
+    }
+
+    cv::Size input_size() const override {
+        return {kInputSize, kInputSize};
     }
 
 private:
@@ -331,6 +362,10 @@ public:
 
     std::string name() const override {
         return "tensorrt-unavailable:" + model_path_;
+    }
+
+    cv::Size input_size() const override {
+        return {kInputSize, kInputSize};
     }
 
 private:

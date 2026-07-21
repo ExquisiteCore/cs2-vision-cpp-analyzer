@@ -9,6 +9,7 @@
 namespace vision_analyzer {
 
 [[nodiscard]] LetterboxResult letterbox(const cv::Mat& frame, int target_size);
+[[nodiscard]] LetterboxResult letterbox(const cv::Mat& frame, const cv::Size& target_size);
 
 [[nodiscard]] cv::Rect restore_box(
     float cx,

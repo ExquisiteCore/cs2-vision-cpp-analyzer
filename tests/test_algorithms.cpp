@@ -1,3 +1,4 @@
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/hid_output.hpp"
+#include "vision_analyzer/model_input.hpp"
 #include "vision_analyzer/model_schema.hpp"
 #include "vision_analyzer/postprocess.hpp"
 #include "vision_analyzer/runtime_config.hpp"
@@ -77,6 +79,54 @@ void test_model_class_schema_rejects_wrong_output_dimensions() {
         rejected = true;
     }
     require(rejected, "model class schema should reject COCO-style output dimensions");
+}
+
+void test_model_input_accepts_static_fp32_nchw() {
+    const ModelInputSpec spec = parse_model_input_spec(
+        {1, 3, 640, 640},
+        ModelElementType::Float32
+    );
+
+    require(spec.width == 640 && spec.height == 640, "model input should preserve static size");
+    require(
+        spec.shape == std::array<std::int64_t, 4>{1, 3, 640, 640},
+        "model input should preserve NCHW shape"
+    );
+}
+
+void test_model_input_rejects_dynamic_or_non_fp32_input() {
+    const auto rejection_message = [](const std::vector<std::int64_t>& shape, ModelElementType type) {
+        try {
+            (void)parse_model_input_spec(shape, type);
+        } catch (const std::runtime_error& error) {
+            return std::string(error.what());
+        }
+        return std::string{};
+    };
+
+    require(
+        rejection_message({1, 3, -1, -1}, ModelElementType::Float32).find("[1, 3, -1, -1]") != std::string::npos,
+        "dynamic model input error should include the actual shape"
+    );
+    require(
+        rejection_message({1, 4, 640, 640}, ModelElementType::Float32).find("[1, 4, 640, 640]") != std::string::npos,
+        "non-NCHW model input error should include the actual shape"
+    );
+    require(
+        rejection_message({1, 3, 0, 640}, ModelElementType::Float32).find("[1, 3, 0, 640]") != std::string::npos,
+        "invalid model input dimensions should include the actual shape"
+    );
+    require(
+        rejection_message({1, 3, 640, 640}, ModelElementType::Unsupported).find("[1, 3, 640, 640]") != std::string::npos,
+        "non-FP32 model input error should include the actual shape"
+    );
+}
+
+void test_letterbox_accepts_rectangular_target() {
+    const cv::Mat source(720, 1280, CV_8UC3, cv::Scalar(0, 0, 0));
+    const LetterboxResult result = letterbox(source, cv::Size(640, 384));
+
+    require(result.image.size() == cv::Size(640, 384), "letterbox should use discovered width and height");
 }
 
 void test_model_schema_file_validates_class_order() {
@@ -685,6 +735,9 @@ int main() {
         test_class_aware_nms_keeps_overlapping_different_classes();
         test_enemy_filter_keeps_opposing_side_only();
         test_model_class_schema_rejects_wrong_output_dimensions();
+        test_model_input_accepts_static_fp32_nchw();
+        test_model_input_rejects_dynamic_or_non_fp32_input();
+        test_letterbox_accepts_rectangular_target();
         test_model_schema_file_validates_class_order();
         test_model_schema_file_rejects_wrong_class_order();
         test_live_schema_validation_requires_schema_file();

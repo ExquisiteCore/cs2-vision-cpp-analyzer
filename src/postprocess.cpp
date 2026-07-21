@@ -10,21 +10,28 @@
 
 namespace vision_analyzer {
 
-LetterboxResult letterbox(const cv::Mat& frame, int target_size) {
+LetterboxResult letterbox(const cv::Mat& frame, const cv::Size& target_size) {
     const int width = frame.cols;
     const int height = frame.rows;
-    const float scale = std::min(target_size / static_cast<float>(width), target_size / static_cast<float>(height));
+    const float scale = std::min(
+        target_size.width / static_cast<float>(width),
+        target_size.height / static_cast<float>(height)
+    );
     const int resized_width = static_cast<int>(std::round(width * scale));
     const int resized_height = static_cast<int>(std::round(height * scale));
-    const int pad_x = (target_size - resized_width) / 2;
-    const int pad_y = (target_size - resized_height) / 2;
+    const int pad_x = (target_size.width - resized_width) / 2;
+    const int pad_y = (target_size.height - resized_height) / 2;
 
     cv::Mat resized;
     cv::resize(frame, resized, cv::Size(resized_width, resized_height));
 
-    cv::Mat output(target_size, target_size, CV_8UC3, cv::Scalar(114, 114, 114));
+    cv::Mat output(target_size, CV_8UC3, cv::Scalar(114, 114, 114));
     resized.copyTo(output(cv::Rect(pad_x, pad_y, resized_width, resized_height)));
     return {output, scale, pad_x, pad_y};
+}
+
+LetterboxResult letterbox(const cv::Mat& frame, int target_size) {
+    return letterbox(frame, cv::Size(target_size, target_size));
 }
 
 cv::Rect restore_box(float cx, float cy, float w, float h, const LetterboxResult& letterbox_result, const cv::Size& frame_size) {

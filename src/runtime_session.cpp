@@ -24,7 +24,8 @@ void RuntimeSession::open(const Options& options) {
     detector_ = create_detector(options_.backend, options_.model_path);
 
     if (options_.warmup_frames > 0) {
-        cv::Mat warmup_frame(kInputSize, kInputSize, CV_8UC3, cv::Scalar(0, 0, 0));
+        const cv::Size warmup_size = detector_->input_size();
+        cv::Mat warmup_frame(warmup_size, CV_8UC3, cv::Scalar(0, 0, 0));
         for (int i = 0; i < options_.warmup_frames; ++i) {
             (void)detector_->detect(warmup_frame, options_.confidence, options_.nms_threshold);
         }

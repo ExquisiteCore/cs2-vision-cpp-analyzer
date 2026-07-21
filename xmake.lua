@@ -35,6 +35,7 @@ local runtime_core_files = {
     "src/detector.cpp",
     "src/frame_source.cpp",
     "src/hid_output.cpp",
+    "src/model_input.cpp",
     "src/model_schema.cpp",
     "src/postprocess.cpp",
     "src/runtime_config.cpp",
