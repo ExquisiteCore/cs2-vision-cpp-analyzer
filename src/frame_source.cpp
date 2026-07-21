@@ -22,6 +22,8 @@
 #include <wrl/client.h>
 #endif
 
+#include "vision_analyzer/dxgi_roi.hpp"
+
 namespace vision_analyzer {
 namespace {
 
@@ -242,11 +244,12 @@ private:
         throw_if_failed(output1->DuplicateOutput(device_.Get(), &duplication_), "DXGI DuplicateOutput failed");
     }
 
-    void ensure_staging_texture(const D3D11_TEXTURE2D_DESC& source_desc) {
+    void ensure_staging_texture(const D3D11_TEXTURE2D_DESC& source_desc, const cv::Rect& copy_region) {
         if (staging_texture_) {
             D3D11_TEXTURE2D_DESC current_desc{};
             staging_texture_->GetDesc(&current_desc);
-            if (current_desc.Width == source_desc.Width && current_desc.Height == source_desc.Height &&
+            if (current_desc.Width == static_cast<UINT>(copy_region.width) &&
+                current_desc.Height == static_cast<UINT>(copy_region.height) &&
                 current_desc.Format == source_desc.Format) {
                 return;
             }
@@ -254,6 +257,10 @@ private:
         }
 
         D3D11_TEXTURE2D_DESC staging_desc = source_desc;
+        staging_desc.Width = static_cast<UINT>(copy_region.width);
+        staging_desc.Height = static_cast<UINT>(copy_region.height);
+        staging_desc.MipLevels = 1;
+        staging_desc.ArraySize = 1;
         staging_desc.BindFlags = 0;
         staging_desc.MiscFlags = 0;
         staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -264,15 +271,28 @@ private:
     void copy_texture_to_frame(ID3D11Texture2D* texture, CapturedFrame& frame) {
         D3D11_TEXTURE2D_DESC desc{};
         texture->GetDesc(&desc);
-        ensure_staging_texture(desc);
-        context_->CopyResource(staging_texture_.Get(), texture);
+        const cv::Rect copy_region = resolve_dxgi_copy_region(
+            cv::Size(static_cast<int>(desc.Width), static_cast<int>(desc.Height)),
+            roi_
+        );
+        ensure_staging_texture(desc, copy_region);
+
+        const D3D11_BOX source_box{
+            static_cast<UINT>(copy_region.x),
+            static_cast<UINT>(copy_region.y),
+            0,
+            static_cast<UINT>(copy_region.x + copy_region.width),
+            static_cast<UINT>(copy_region.y + copy_region.height),
+            1,
+        };
+        context_->CopySubresourceRegion(staging_texture_.Get(), 0, 0, 0, 0, texture, 0, &source_box);
 
         D3D11_MAPPED_SUBRESOURCE mapped{};
         throw_if_failed(context_->Map(staging_texture_.Get(), 0, D3D11_MAP_READ, 0, &mapped), "Map DXGI staging texture failed");
         if (debug_ && !debug_printed_) {
             const auto* bytes = static_cast<const unsigned char*>(mapped.pData);
             const std::size_t sample_size = std::min<std::size_t>(
-                static_cast<std::size_t>(mapped.RowPitch) * static_cast<std::size_t>(desc.Height),
+                static_cast<std::size_t>(mapped.RowPitch) * static_cast<std::size_t>(copy_region.height),
                 64U * 1024U
             );
             std::size_t nonzero = 0;
@@ -284,8 +304,12 @@ private:
                 }
             }
             std::cout << "dxgi_debug"
-                      << " width=" << desc.Width
-                      << " height=" << desc.Height
+                      << " source_width=" << desc.Width
+                      << " source_height=" << desc.Height
+                      << " copy_x=" << copy_region.x
+                      << " copy_y=" << copy_region.y
+                      << " width=" << copy_region.width
+                      << " height=" << copy_region.height
                       << " format=" << desc.Format
                       << " row_pitch=" << mapped.RowPitch
                       << " sample_bytes=" << sample_size
@@ -294,19 +318,10 @@ private:
                       << '\n';
             debug_printed_ = true;
         }
-        cv::Mat bgra(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_8UC4, mapped.pData, mapped.RowPitch);
+        cv::Mat bgra(copy_region.height, copy_region.width, CV_8UC4, mapped.pData, mapped.RowPitch);
         cv::Mat bgr;
         cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
         context_->Unmap(staging_texture_.Get(), 0);
-
-        if (roi_.width > 0 && roi_.height > 0) {
-            const cv::Rect frame_rect(0, 0, bgr.cols, bgr.rows);
-            const cv::Rect clipped = roi_ & frame_rect;
-            if (clipped.width <= 0 || clipped.height <= 0) {
-                throw std::runtime_error("DXGI ROI is outside the captured frame");
-            }
-            bgr = bgr(clipped).clone();
-        }
 
         frame = CapturedFrame{
             std::move(bgr),

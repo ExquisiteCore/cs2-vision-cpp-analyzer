@@ -33,6 +33,7 @@ local runtime_core_files = {
     "src/calibration.cpp",
     "src/calibration_fit.cpp",
     "src/detector.cpp",
+    "src/dxgi_roi.cpp",
     "src/frame_source.cpp",
     "src/hid_output.cpp",
     "src/model_input.cpp",

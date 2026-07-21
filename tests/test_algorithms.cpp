@@ -11,6 +11,7 @@
 
 #include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/calibration.hpp"
+#include "vision_analyzer/dxgi_roi.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/model_input.hpp"
 #include "vision_analyzer/model_schema.hpp"
@@ -157,6 +158,34 @@ void test_letterbox_accepts_rectangular_target() {
     const LetterboxResult result = letterbox(source, cv::Size(640, 384));
 
     require(result.image.size() == cv::Size(640, 384), "letterbox should use discovered width and height");
+}
+
+void test_dxgi_copy_region_uses_full_frame_when_roi_is_disabled() {
+    require(
+        resolve_dxgi_copy_region({1920, 1080}, {}) == cv::Rect(0, 0, 1920, 1080),
+        "disabled ROI should copy the full desktop"
+    );
+}
+
+void test_dxgi_copy_region_preserves_or_clips_requested_roi() {
+    require(
+        resolve_dxgi_copy_region({1920, 1080}, {640, 220, 640, 640}) == cv::Rect(640, 220, 640, 640),
+        "in-bounds ROI should be copied exactly"
+    );
+    require(
+        resolve_dxgi_copy_region({1920, 1080}, {1800, 1000, 640, 640}) == cv::Rect(1800, 1000, 120, 80),
+        "ROI should be clipped before GPU copy"
+    );
+}
+
+void test_dxgi_copy_region_rejects_empty_intersection() {
+    bool rejected = false;
+    try {
+        (void)resolve_dxgi_copy_region({1920, 1080}, {2000, 1200, 100, 100});
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "out-of-frame ROI should be rejected");
 }
 
 void test_model_schema_file_validates_class_order() {
@@ -772,6 +801,9 @@ int main() {
         test_sm61_tensorrt_profile_is_fp32_and_cached();
         test_runtime_defaults_to_sm61_tensorrt();
         test_letterbox_accepts_rectangular_target();
+        test_dxgi_copy_region_uses_full_frame_when_roi_is_disabled();
+        test_dxgi_copy_region_preserves_or_clips_requested_roi();
+        test_dxgi_copy_region_rejects_empty_intersection();
         test_model_schema_file_validates_class_order();
         test_model_schema_file_rejects_wrong_class_order();
         test_live_schema_validation_requires_schema_file();
