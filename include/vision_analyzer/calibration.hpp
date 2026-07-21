@@ -5,6 +5,7 @@
 
 #include <opencv2/core.hpp>
 
+#include "vision_analyzer/hid_calibration_profile.hpp"
 #include "vision_analyzer/types.hpp"
 
 namespace vision_analyzer {
@@ -21,6 +22,13 @@ struct CalibrationSample {
     int counts_dx = 0;
     int counts_dy = 0;
     cv::Point2d visual_shift;
+    double phase_response = 1.0;
+    int level = 0;
+};
+
+struct VisualShiftEstimate {
+    cv::Point2d shift;
+    double response = 0.0;
 };
 
 struct CalibrationFit {
@@ -41,6 +49,11 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
 [[nodiscard]] CalibrationFit fit_hid_calibration(
     const std::vector<CalibrationSample>& samples,
     int calibration_step_counts
+);
+[[nodiscard]] HidCalibrationProfile fit_adaptive_hid_calibration(
+    const std::vector<CalibrationSample>& samples,
+    const cv::Size& frame_size,
+    int max_step = 120
 );
 void write_hid_tuning_config(std::ostream& output, const Options& options, const CalibrationFit& fit);
 void run_hid_calibration(const Options& options);

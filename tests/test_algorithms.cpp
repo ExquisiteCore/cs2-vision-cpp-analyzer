@@ -648,6 +648,46 @@ void test_hid_calibration_fit_generates_tuning_values() {
     require(output.str().find("hid_max_step=120") != std::string::npos, "tuned config should include max step");
 }
 
+std::vector<CalibrationSample> make_valid_adaptive_calibration_samples() {
+    return {
+        {0, 0, {0.2, 0.1}, 0.95, -1},
+        {16, 0, {-8.0, 0.2}, 0.90, 0},
+        {-16, 0, {8.1, -0.1}, 0.91, 0},
+        {40, 0, {-16.0, 0.2}, 0.92, 1},
+        {-40, 0, {16.2, -0.2}, 0.90, 1},
+        {80, 0, {-20.0, 0.2}, 0.93, 2},
+        {-80, 0, {20.2, -0.1}, 0.91, 2},
+        {0, 16, {0.1, 8.0}, 0.92, 0},
+        {0, -16, {-0.1, -8.1}, 0.90, 0},
+        {0, 40, {0.2, 16.0}, 0.91, 1},
+        {0, -40, {-0.2, -16.1}, 0.92, 1},
+        {0, 80, {0.1, 20.0}, 0.93, 2},
+        {0, -80, {-0.1, -20.1}, 0.92, 2},
+    };
+}
+
+void test_adaptive_calibration_fits_signed_axes_and_inverted_y() {
+    const auto samples = make_valid_adaptive_calibration_samples();
+    const auto profile = fit_adaptive_hid_calibration(samples, {1920, 1080}, 120);
+    require(profile.valid, "consistent samples should produce a profile");
+    require(profile.x.counts_per_pixel[0] > 0.0F, "normal X should be positive");
+    require(profile.y.counts_per_pixel[0] < 0.0F, "inverted Y should be negative");
+    require(profile.x.counts_per_pixel[2] > profile.x.counts_per_pixel[0],
+            "nonlinear samples should preserve a large-step gain");
+}
+
+void test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion() {
+    auto samples = make_valid_adaptive_calibration_samples();
+    for (auto& sample : samples) {
+        if (sample.level == 1 && sample.counts_dx != 0) {
+            sample.phase_response = 0.05;
+            sample.visual_shift.y = sample.visual_shift.x;
+        }
+    }
+    const auto profile = fit_adaptive_hid_calibration(samples, {1920, 1080}, 120);
+    require(!profile.valid, "missing valid X level must reject the profile");
+}
+
 void test_runtime_config_file_overrides_tuning_and_io() {
     const auto path = std::filesystem::temp_directory_path() / "vision_analyzer_runtime.cfg";
     {
@@ -883,6 +923,8 @@ int main() {
         test_aim_controller_scales_and_clamps_target_offset();
         test_aim_controller_deadzone_suppresses_tiny_steps();
         test_hid_calibration_fit_generates_tuning_values();
+        test_adaptive_calibration_fits_signed_axes_and_inverted_y();
+        test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion();
         test_runtime_config_file_overrides_tuning_and_io();
         test_calibrated_hid_curve_interpolates_signed_gain();
         test_calibrated_hid_curve_supports_inverted_axis_deadzone_and_clamp();
