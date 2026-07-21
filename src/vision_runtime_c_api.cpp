@@ -170,8 +170,12 @@ int32_t va_set_hid_click(VaRuntime* runtime, int32_t enabled, int32_t cooldown_f
         if (cooldown_frames < 0) {
             throw std::runtime_error("click cooldown must be greater than or equal to 0");
         }
-        runtime->options.hid_click_enabled = enabled != 0;
-        runtime->options.hid_click_cooldown_frames = cooldown_frames;
+        runtime->options.fire_enabled = enabled != 0;
+        runtime->options.fire_policy.cooldown_frames = cooldown_frames;
+        if (runtime->session.is_open()) {
+            runtime->session.set_fire_policy(runtime->options.fire_policy);
+            runtime->session.set_fire_enabled(runtime->options.fire_enabled);
+        }
     });
 }
 

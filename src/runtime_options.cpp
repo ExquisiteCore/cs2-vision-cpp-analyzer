@@ -28,6 +28,19 @@ void validate_options(const Options& options) {
     if (!std::isfinite(options.hid_deadzone_px) || options.hid_deadzone_px < 0.0F) {
         throw std::runtime_error("--hid-deadzone must be finite and greater than or equal to 0");
     }
+    if (!std::isfinite(options.fire_policy.head_confidence) ||
+        options.fire_policy.head_confidence < 0.0F ||
+        options.fire_policy.head_confidence > 1.0F) {
+        throw std::runtime_error("head fire confidence must be finite and in [0, 1]");
+    }
+    if (!std::isfinite(options.fire_policy.body_confidence) ||
+        options.fire_policy.body_confidence < 0.0F ||
+        options.fire_policy.body_confidence > 1.0F) {
+        throw std::runtime_error("body fire confidence must be finite and in [0, 1]");
+    }
+    if (options.fire_policy.cooldown_frames < 0) {
+        throw std::runtime_error("fire cooldown frames must be greater than or equal to 0");
+    }
     if (!std::isfinite(options.tuning.body_head_anchor_ratio) ||
         options.tuning.body_head_anchor_ratio <= 0.0F ||
         options.tuning.body_head_anchor_ratio >= 0.5F) {
@@ -54,9 +67,9 @@ void validate_options(const Options& options) {
         if (options.hid_port.empty()) {
             throw std::runtime_error("--calibrate-hid requires --hid-port COMx");
         }
-        if (options.calibration_step_counts <= 0 || options.calibration_repeats <= 0 ||
+        if (options.calibration_step_counts <= 0 || options.calibration_repeats < 2 ||
             options.calibration_noise_samples < 0 || options.calibration_settle_ms < 0) {
-            throw std::runtime_error("calibration step/repeats must be greater than 0; noise samples and settle must be non-negative");
+            throw std::runtime_error("calibration repeats must be at least 2; step must be positive; noise samples and settle must be non-negative");
         }
         return;
     }

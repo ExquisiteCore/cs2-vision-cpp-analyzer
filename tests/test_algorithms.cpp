@@ -17,6 +17,7 @@
 #include "vision_analyzer/model_input.hpp"
 #include "vision_analyzer/model_schema.hpp"
 #include "vision_analyzer/postprocess.hpp"
+#include "vision_analyzer/runtime.hpp"
 #include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/runtime_session.hpp"
 #include "vision_analyzer/runtime_status.hpp"
@@ -721,6 +722,24 @@ void test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion() {
     require(!profile.valid, "missing valid X level must reject the profile");
 }
 
+void test_calibration_probe_adjustment_is_bounded() {
+    require(adjust_calibration_probe_count(16, 0.5, 8.0) == 120,
+            "tiny response should scale up to the upper bound");
+    require(adjust_calibration_probe_count(80, 200.0, 80.0) == 32,
+            "oversized response should scale down proportionally");
+}
+
+void test_visual_shift_estimate_preserves_phase_response() {
+    cv::Mat image(64, 64, CV_32F);
+    cv::randu(image, 0.0F, 255.0F);
+    const auto estimate = estimate_visual_shift_with_response(image, image);
+    require_near(static_cast<float>(estimate.shift.x), 0.0F, 0.01F,
+                 "identical frames should have no x shift");
+    require_near(static_cast<float>(estimate.shift.y), 0.0F, 0.01F,
+                 "identical frames should have no y shift");
+    require(estimate.response > 0.90, "identical frames should have a strong phase response");
+}
+
 void test_runtime_config_file_overrides_tuning_and_io() {
     const auto path = std::filesystem::temp_directory_path() / "vision_analyzer_runtime.cfg";
     {
@@ -736,6 +755,11 @@ void test_runtime_config_file_overrides_tuning_and_io() {
                << "dxgi_roi_height=600\n"
                << "tensorrt_cache_path=cache-from-config\n"
                << "output_enabled=true\n"
+               << "fire_enabled=true\n"
+               << "body_fire_enabled=true\n"
+               << "head_fire_confidence=0.35\n"
+               << "body_fire_confidence=0.45\n"
+               << "hid_click_cooldown_frames=3\n"
                << "hid_gain=0.5\n"
                << "hid_deadzone_px=2.5\n"
                << "body_head_anchor_ratio=0.22\n"
@@ -761,6 +785,13 @@ void test_runtime_config_file_overrides_tuning_and_io() {
     );
     require(options.tensorrt_cache_path == "cache-from-config", "config should set TensorRT cache path");
     require(options.output_enabled, "config should enable RP2350 output");
+    require(options.fire_enabled, "config should enable automatic fire planning");
+    require(options.fire_policy.body_enabled, "config should enable body fallback fire");
+    require_near(options.fire_policy.head_confidence, 0.35F, 0.001F,
+                 "config should set head fire confidence");
+    require_near(options.fire_policy.body_confidence, 0.45F, 0.001F,
+                 "config should set body fire confidence");
+    require(options.fire_policy.cooldown_frames == 3, "config should set fire cooldown");
     require_near(options.hid_move_gain, 0.5F, 0.001F, "config should set HID gain");
     require_near(options.hid_deadzone_px, 2.5F, 0.001F, "config should set HID deadzone");
     require_near(options.tuning.body_head_anchor_ratio, 0.22F, 0.001F, "config should set body anchor ratio");
@@ -768,6 +799,19 @@ void test_runtime_config_file_overrides_tuning_and_io() {
     require_near(options.tuning.kalman_measurement_noise, 5.5F, 0.001F, "config should set measurement noise");
     require_near(options.tuning.kalman_error_covariance, 7.5F, 0.001F, "config should set error covariance");
     require(options.action_log_path == "actions.txt", "config should set action log path");
+}
+
+void test_runtime_options_reject_invalid_fire_policy() {
+    Options options;
+    options.dry_run = true;
+    options.fire_policy.head_confidence = 1.01F;
+    bool rejected = false;
+    try {
+        validate_options(options);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "runtime options should reject fire confidence above one");
 }
 
 void test_aim_controller_holds_when_no_target() {
@@ -1055,7 +1099,10 @@ int main() {
         test_hid_calibration_fit_generates_tuning_values();
         test_adaptive_calibration_fits_signed_axes_and_inverted_y();
         test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion();
+        test_calibration_probe_adjustment_is_bounded();
+        test_visual_shift_estimate_preserves_phase_response();
         test_runtime_config_file_overrides_tuning_and_io();
+        test_runtime_options_reject_invalid_fire_policy();
         test_calibrated_hid_curve_interpolates_signed_gain();
         test_calibrated_hid_curve_supports_inverted_axis_deadzone_and_clamp();
         test_aim_controller_holds_when_no_target();

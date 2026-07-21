@@ -88,9 +88,19 @@ void apply_entry(Options& options, const std::string& key, const std::string& va
     } else if (key == "deadzone_px" || key == "hid_deadzone_px") {
         options.hid_deadzone_px = std::stof(value);
     } else if (key == "hid_click") {
-        options.hid_click_enabled = parse_bool(value);
+        options.fire_enabled = parse_bool(value);
     } else if (key == "hid_click_cooldown" || key == "hid_click_cooldown_frames") {
-        options.hid_click_cooldown_frames = std::stoi(value);
+        options.fire_policy.cooldown_frames = std::stoi(value);
+    } else if (key == "fire_enabled") {
+        options.fire_enabled = parse_bool(value);
+    } else if (key == "body_fire_enabled") {
+        options.fire_policy.body_enabled = parse_bool(value);
+    } else if (key == "head_fire_confidence") {
+        options.fire_policy.head_confidence = std::stof(value);
+    } else if (key == "body_fire_confidence") {
+        options.fire_policy.body_confidence = std::stof(value);
+    } else if (key == "fire_cooldown_frames") {
+        options.fire_policy.cooldown_frames = std::stoi(value);
     } else if (key == "player_side") {
         options.player_side = parse_player_side(value);
     } else if (key == "dry_run") {

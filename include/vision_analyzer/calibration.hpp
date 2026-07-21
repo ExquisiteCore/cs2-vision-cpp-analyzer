@@ -45,7 +45,16 @@ struct CalibrationFit {
 
 [[nodiscard]] PointerSettings query_windows_pointer_settings();
 void print_pointer_settings(std::ostream& output, const PointerSettings& settings);
+[[nodiscard]] VisualShiftEstimate estimate_visual_shift_with_response(
+    const cv::Mat& before,
+    const cv::Mat& after
+);
 [[nodiscard]] cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after);
+[[nodiscard]] int adjust_calibration_probe_count(
+    int current_counts,
+    double observed_shift_px,
+    double target_shift_px
+);
 [[nodiscard]] CalibrationFit fit_hid_calibration(
     const std::vector<CalibrationSample>& samples,
     int calibration_step_counts
@@ -56,6 +65,6 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     int max_step = 120
 );
 void write_hid_tuning_config(std::ostream& output, const Options& options, const CalibrationFit& fit);
-void run_hid_calibration(const Options& options);
+[[nodiscard]] HidCalibrationProfile run_hid_calibration(const Options& options);
 
 }  // namespace vision_analyzer

@@ -104,9 +104,9 @@ namespace vision_analyzer {
         } else if (key == "--hid-deadzone") {
             options.hid_deadzone_px = std::stof(require_value(key));
         } else if (key == "--hid-click") {
-            options.hid_click_enabled = true;
+            options.fire_enabled = true;
         } else if (key == "--hid-click-cooldown") {
-            options.hid_click_cooldown_frames = std::stoi(require_value(key));
+            options.fire_policy.cooldown_frames = std::stoi(require_value(key));
         } else if (key == "--test-hid-move") {
             options.test_hid_move = true;
             options.hid_test_dx = std::stoi(require_value(key));
@@ -184,8 +184,9 @@ namespace vision_analyzer {
                 << "  --hid-gain 1.0    multiply target offset before sending relative mouse movement\n"
                 << "  --hid-max-step N  clamp each relative mouse move axis to +/-N, default 120\n"
                 << "  --hid-deadzone PX suppress tiny per-axis movements below this offset, default 1.5\n"
-                << "  --hid-click       send left click when fire_candidate is true\n"
-                << "  --hid-click-cooldown N  minimum frame cooldown between SDK left clicks, default 6\n"
+                << "  --hid-click       enable aggressive head/torso automatic click planning\n"
+                << "  --hid-click-cooldown N  processed-frame cooldown between SDK left clicks, default 3\n"
+                << "  fire policy config keys: body_fire_enabled, head_fire_confidence, body_fire_confidence\n"
                 << "  --test-hid-move DX DY  send one SDK relative mouse move and exit\n"
                 << "  --calibrate-hid   run controlled HID moves, estimate DXGI visual shift, and exit\n"
                 << "  --calibration-output PATH  write HID calibration samples to a text file\n"
@@ -331,7 +332,9 @@ void run(const Options& options, const std::atomic_bool* stop_requested) {
         return;
     }
     if (options.calibrate_hid) {
-        run_hid_calibration(options);
+        const HidCalibrationProfile profile = run_hid_calibration(options);
+        std::cout << "calibration_quality=" << profile.quality
+                  << " accepted_samples=" << profile.accepted_samples << '\n';
         return;
     }
 

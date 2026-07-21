@@ -36,8 +36,9 @@ void RuntimeSession::open(const Options& options) {
     aim_options.move_gain = options_.hid_move_gain;
     aim_options.max_step = options_.hid_max_step;
     aim_options.deadzone_px = options_.hid_deadzone_px;
-    aim_options.fire_enabled = options_.hid_click_enabled;
-    aim_options.fire_policy.cooldown_frames = options_.hid_click_cooldown_frames;
+    aim_options.fire_enabled = options_.fire_enabled;
+    aim_options.fire_policy = options_.fire_policy;
+    aim_options.calibration = options_.hid_calibration;
     aim_controller_ = std::make_unique<AimController>(aim_options);
 
     if (!options_.action_log_path.empty()) {
@@ -56,14 +57,16 @@ void RuntimeSession::open(const Options& options) {
                   << " hid_gain=" << options_.hid_move_gain
                   << " hid_max_step=" << options_.hid_max_step
                   << " hid_deadzone=" << options_.hid_deadzone_px
-                  << " hid_click=" << (options_.hid_click_enabled ? 1 : 0)
+                  << " fire_enabled=" << (options_.fire_enabled ? 1 : 0)
+                  << " body_fire=" << (options_.fire_policy.body_enabled ? 1 : 0)
                   << " player_side=" << player_side_name(options_.player_side) << '\n';
     } else {
         std::cout << "dry_run=1"
                   << " hid_gain=" << options_.hid_move_gain
                   << " hid_max_step=" << options_.hid_max_step
                   << " hid_deadzone=" << options_.hid_deadzone_px
-                  << " hid_click=" << (options_.hid_click_enabled ? 1 : 0)
+                  << " fire_enabled=" << (options_.fire_enabled ? 1 : 0)
+                  << " body_fire=" << (options_.fire_policy.body_enabled ? 1 : 0)
                   << " player_side=" << player_side_name(options_.player_side) << '\n';
     }
 
@@ -164,6 +167,24 @@ void RuntimeSession::set_output_enabled(bool enabled) {
     }
 }
 
+void RuntimeSession::set_fire_enabled(bool enabled) {
+    options_.fire_enabled = enabled;
+    if (aim_controller_) {
+        aim_controller_->set_fire_enabled(enabled);
+    }
+}
+
+void RuntimeSession::set_fire_policy(FirePolicy policy) {
+    if (aim_controller_) {
+        aim_controller_->set_fire_policy(policy);
+    } else {
+        AimControllerOptions validation_options;
+        validation_options.fire_policy = policy;
+        (void)AimController(validation_options);
+    }
+    options_.fire_policy = policy;
+}
+
 void RuntimeSession::stop_all() {
     if (hid_sender_) {
         hid_sender_->stop_all();
@@ -171,6 +192,7 @@ void RuntimeSession::stop_all() {
 }
 
 void RuntimeSession::close() {
+    set_fire_enabled(false);
     stop_all();
     if (frame_source_) {
         frame_source_->release();
