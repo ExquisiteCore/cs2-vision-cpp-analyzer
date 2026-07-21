@@ -40,16 +40,19 @@ Matching *.schema.json file for live HID mode
 RP2350 HID Bridge C++ SDK for real HID output
 ```
 
-Optional acceleration:
+GTX 1080 Ti production acceleration target:
 
 ```text
-ONNX Runtime GPU
-CUDA/cuDNN
-TensorRT through ONNX Runtime TensorRT Execution Provider
+ONNX Runtime GPU 1.17.x
+TensorRT 8.6.x
+CUDA 11.8
+cuDNN 8.9.x
+GeForce GTX 1080 Ti / SM 6.1
+FP32
 ```
 
-The stable default backend is `opencv-onnx`. It runs without ONNX Runtime,
-CUDA, or TensorRT.
+The default backend is `ort-tensorrt`. `opencv-onnx` remains available as an
+explicit CPU fallback when ONNX Runtime, CUDA, or TensorRT is unavailable.
 
 ## Build with xmake
 
@@ -88,6 +91,38 @@ xmake f -m release --onnxruntime_root=$env:ONNXRUNTIME_ROOT --hid_sdk_root=..\rp
 xmake
 ```
 
+## GTX 1080 Ti Production Runtime
+
+Use matching versions in one process. Do not mix the production DLL directory
+with CUDA 12, cuDNN 9, TensorRT 11, or a newer ONNX Runtime provider DLL.
+
+One concrete directory layout is:
+
+```text
+D:\runtime\sm61\onnxruntime-win-x64-gpu-1.17.3
+D:\runtime\sm61\TensorRT-8.6.1.6\lib
+D:\runtime\sm61\cudnn-8.9\bin
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin
+```
+
+Configure only the process that builds/runs the production package:
+
+```powershell
+$env:ONNXRUNTIME_ROOT='D:\runtime\sm61\onnxruntime-win-x64-gpu-1.17.3'
+$env:PATH='D:\runtime\sm61\TensorRT-8.6.1.6\lib;D:\runtime\sm61\cudnn-8.9\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin;' + $env:PATH
+xmake f -c -m release --onnxruntime_root=$env:ONNXRUNTIME_ROOT
+xmake
+```
+
+The first model open builds an FP32 engine in
+`ort-trt-cache-sm61-fp32` under the process working directory. Later opens
+reuse it. Clear that directory after changing the model, GPU, ONNX Runtime,
+TensorRT, CUDA, or cuDNN.
+
+TensorRT 8.6 does not support the RTX 5060 (SM 12.0), so final provider and FPS
+validation must run on the GTX 1080 Ti host. The RTX 5060 development machine
+can still compile the source and run hardware-independent tests.
+
 Primary DLL outputs:
 
 ```text
@@ -108,8 +143,9 @@ xmake build vision_runtime
 xmake run vision_runtime_c_api_tests
 ```
 
-Use `xmake run` when possible. It sets runtime DLL search paths for dependencies
-resolved by this project.
+Use `xmake run` when possible. It adds the configured ONNX Runtime `lib`
+directory to the process DLL search path. CUDA, cuDNN, and TensorRT still come
+from the matching process-specific `PATH` shown above.
 
 ## Build with CMake
 
@@ -192,7 +228,9 @@ If needed, crop the live input before inference:
 ```
 
 ROI coordinates are relative to the selected DXGI output. The target offset is
-measured from the ROI center.
+measured from the ROI center. A configured ROI is copied into an ROI-sized
+D3D11 staging texture before CPU readback; the full desktop is not converted
+and cropped afterward.
 
 ## Offline Dry-Run
 
@@ -241,14 +279,18 @@ Then run live DXGI movement without clicking:
 
 ```powershell
 xmake run vision_analyzer `
-  --backend opencv-onnx `
+  --backend ort-tensorrt `
+  --tensorrt-cache-path ort-trt-cache-sm61-fp32 `
   --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx `
+  --schema D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx.schema.json `
   --input dxgi `
   --dxgi-output 0 `
+  --dxgi-roi 640 220 640 640 `
   --player-side ct `
   --hid-port COM3 `
   --hid-gain 1.0 `
   --hid-max-step 120 `
+  --output-enabled `
   --preview
 ```
 
@@ -256,15 +298,24 @@ Enable left-click output only after movement is calibrated:
 
 ```powershell
 xmake run vision_analyzer `
-  --backend opencv-onnx `
+  --backend ort-tensorrt `
+  --tensorrt-cache-path ort-trt-cache-sm61-fp32 `
   --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx `
+  --schema D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx.schema.json `
   --input dxgi `
   --dxgi-output 0 `
+  --dxgi-roi 640 220 640 640 `
   --player-side ct `
   --hid-port COM3 `
   --hid-click `
-  --hid-click-cooldown 6
+  --hid-click-cooldown 6 `
+  --output-enabled
 ```
+
+Output is disabled by default. A DLL host calls
+`va_set_output_enabled(runtime, 1)` when its own hotkey/arming condition is
+active and calls `va_set_output_enabled(runtime, 0)` to stop output immediately.
+Detection and returned action values continue while output is disabled.
 
 Live HID mode requires:
 
@@ -299,16 +350,16 @@ xmake run vision_analyzer `
 Review the generated `hid-tuned.cfg`, then pass it before CLI overrides:
 
 ```powershell
-xmake run vision_analyzer --config hid-tuned.cfg --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3
+xmake run vision_analyzer --config hid-tuned.cfg --backend ort-tensorrt --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3 --output-enabled
 ```
 
 ## Backends
 
 ```text
-opencv-onnx   Stable CPU ONNX path through OpenCV DNN.
+opencv-onnx   Explicit CPU ONNX fallback through OpenCV DNN.
 opencv-cuda   Requires OpenCV built with CUDA DNN support.
 ort-cuda      ONNX Runtime CUDA Execution Provider.
-ort-tensorrt  ONNX Runtime TensorRT Execution Provider, with CUDA fallback.
+ort-tensorrt  Default GTX 1080 Ti TensorRT EP, with CUDA subgraph fallback.
 tensorrt      Reserved for native TensorRT C++ builds.
 ```
 
@@ -369,14 +420,24 @@ The API uses an opaque `VaRuntime*` handle and plain C structs:
 VaRuntime* runtime = va_create();
 va_set_model(runtime, "best.onnx");
 va_set_schema(runtime, "best.onnx.schema.json");
-va_set_backend(runtime, "opencv-onnx");
-va_open_video(runtime, "videos/02.mp4", 1);
+va_set_backend(runtime, "ort-tensorrt");
+va_set_tensorrt_cache_path(runtime, "ort-trt-cache-sm61-fp32");
+va_set_dxgi_roi(runtime, 640, 220, 640, 640);
+va_set_player_side(runtime, "ct");
+va_set_hid_port(runtime, "COM3");
+if (va_open_dxgi(runtime, 0, 0, 0) != 0) {
+    fprintf(stderr, "%s\n", va_last_error(runtime));
+    va_destroy(runtime);
+    return 1;
+}
+va_set_output_enabled(runtime, 1);
 
 VaRuntimeAction action;
 while (va_process_next(runtime, &action) == 1) {
     printf("%d %d %d\n", action.frame_index, action.dx, action.dy);
 }
 
+va_set_output_enabled(runtime, 0);
 va_destroy(runtime);
 ```
 

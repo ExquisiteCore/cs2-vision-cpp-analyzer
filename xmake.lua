@@ -19,8 +19,6 @@ local ort_root = get_config("onnxruntime_root") or ""
 local ort_include = path.join(ort_root, "include")
 local ort_lib = path.join(ort_root, "lib")
 local has_ort = ort_root ~= "" and os.isdir(ort_include) and os.isdir(ort_lib)
-local torch_lib = path.join(os.projectdir(), "../../.venv/Lib/site-packages/torch/lib")
-local tensorrt_libs = path.join(os.projectdir(), "../../.venv/Lib/site-packages/tensorrt_libs")
 local hid_sdk_root = get_config("hid_sdk_root") or ""
 if hid_sdk_root == "" then
     hid_sdk_root = path.join(os.projectdir(), "../rp2350_hid_bridge_cpp")
@@ -50,12 +48,6 @@ local runtime_core_files = {
 local function add_runtime_runenvs()
     if has_ort then
         add_runenvs("PATH", ort_lib)
-    end
-    if os.isdir(torch_lib) then
-        add_runenvs("PATH", torch_lib)
-    end
-    if os.isdir(tensorrt_libs) then
-        add_runenvs("PATH", tensorrt_libs)
     end
 end
 
