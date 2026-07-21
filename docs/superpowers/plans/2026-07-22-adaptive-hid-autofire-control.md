@@ -1119,7 +1119,7 @@ git commit -m "build: update adaptive vision runtime submodule"
 From the C++ worktree:
 
 ```powershell
-xmake -P . vision_analyzer vision_runtime vision_analyzer_tests vision_runtime_c_api_tests
+xmake -P . -a
 xmake run -P . vision_analyzer_tests
 xmake run -P . vision_runtime_c_api_tests
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging\sm61\tests\run-tests.ps1

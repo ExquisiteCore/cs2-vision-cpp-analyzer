@@ -470,7 +470,9 @@ try {
             'PythonProjectRoot',
             'src\cs2_vision_runtime',
             'examples\runtime_live_move.py',
-            'python\cs2_vision_runtime'
+            'python\cs2_vision_runtime',
+            'RP2350 HID bridge SDK is not available in this build',
+            'Text.Encoding]::ASCII.GetString'
         )) {
             Assert-True ($content.Contains($token)) "builder must use $token"
         }

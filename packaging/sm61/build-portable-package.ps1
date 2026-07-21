@@ -156,6 +156,11 @@ if (-not (Test-Path -LiteralPath $ReleaseRoot -PathType Container)) {
 foreach ($name in @('vision_runtime.dll', 'vision_runtime.lib', 'vision_analyzer.exe')) {
     Assert-LeafFile -LiteralPath (Join-Path $ReleaseRoot $name) -Description "Release output '$name'"
 }
+$visionRuntimePath = Join-Path $ReleaseRoot 'vision_runtime.dll'
+$visionRuntimeText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($visionRuntimePath))
+if ($visionRuntimeText.Contains('RP2350 HID bridge SDK is not available in this build')) {
+    throw 'vision_runtime.dll was built without RP2350 HID bridge support; configure hid_sdk_root before packaging.'
+}
 Assert-LeafFile -LiteralPath (Join-Path $repoRoot 'include\vision_analyzer\vision_runtime_c_api.h') -Description 'C API header'
 Assert-LeafFile -LiteralPath $ModelPath -Description 'Model'
 Assert-LeafFile -LiteralPath $SchemaPath -Description 'Model schema'
