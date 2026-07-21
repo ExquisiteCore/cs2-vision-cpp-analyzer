@@ -19,6 +19,6 @@ public:
 };
 
 [[nodiscard]] Backend parse_backend(const std::string& value);
-[[nodiscard]] std::unique_ptr<Detector> create_detector(Backend backend, const std::string& model_path);
+[[nodiscard]] std::unique_ptr<Detector> create_detector(const Options& options);
 
 }  // namespace vision_analyzer

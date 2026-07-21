@@ -43,6 +43,7 @@ VA_API int32_t va_load_config(VaRuntime* runtime, const char* path);
 VA_API int32_t va_set_model(VaRuntime* runtime, const char* model_path);
 VA_API int32_t va_set_schema(VaRuntime* runtime, const char* schema_path);
 VA_API int32_t va_set_backend(VaRuntime* runtime, const char* backend);
+VA_API int32_t va_set_tensorrt_cache_path(VaRuntime* runtime, const char* path);
 VA_API int32_t va_set_player_side(VaRuntime* runtime, const char* side);
 VA_API int32_t va_set_hid_port(VaRuntime* runtime, const char* port);
 VA_API int32_t va_set_dry_run(VaRuntime* runtime, int32_t dry_run);

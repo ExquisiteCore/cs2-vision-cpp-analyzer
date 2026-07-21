@@ -131,6 +131,12 @@ int32_t va_set_backend(VaRuntime* runtime, const char* backend) {
     });
 }
 
+int32_t va_set_tensorrt_cache_path(VaRuntime* runtime, const char* path) {
+    return call_api(runtime, [&] {
+        runtime->options.tensorrt_cache_path = required_string(path, "TensorRT cache path");
+    });
+}
+
 int32_t va_set_player_side(VaRuntime* runtime, const char* side) {
     return call_api(runtime, [&] {
         runtime->options.player_side = vision_analyzer::parse_player_side(required_string(side, "player side"));

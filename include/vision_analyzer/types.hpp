@@ -82,10 +82,11 @@ struct Options {
     std::string calibration_output_path;
     std::string calibration_config_output_path = "hid-tuned.cfg";
     std::string action_log_path;
+    std::string tensorrt_cache_path = "ort-trt-cache-sm61-fp32";
     PlayerSide player_side = PlayerSide::Unknown;
     bool dry_run = false;
     int status_every_frames = 30;
-    Backend backend = Backend::OpenCvOnnx;
+    Backend backend = Backend::OrtTensorRt;
     float confidence = 0.25F;
     float nms_threshold = 0.45F;
     RuntimeTuningConfig tuning;

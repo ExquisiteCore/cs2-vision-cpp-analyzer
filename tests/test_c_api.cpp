@@ -26,6 +26,10 @@ void test_setters_accept_valid_values() {
     require(va_set_model(runtime, "model.onnx") == 0, "set model should succeed");
     require(va_set_schema(runtime, "model.onnx.schema.json") == 0, "set schema should succeed");
     require(va_set_backend(runtime, "opencv-onnx") == 0, "set backend should succeed");
+    require(
+        va_set_tensorrt_cache_path(runtime, "D:\\cache\\sm61") == 0,
+        "set TensorRT cache should succeed"
+    );
     require(va_set_player_side(runtime, "ct") == 0, "set player side should succeed");
     require(va_set_hid_port(runtime, "COM3") == 0, "set HID port should succeed");
     require(va_set_dry_run(runtime, 1) == 0, "set dry-run should succeed");
@@ -34,6 +38,19 @@ void test_setters_accept_valid_values() {
     require(va_set_thresholds(runtime, 0.25F, 0.45F) == 0, "set thresholds should succeed");
     require(va_set_dxgi_roi(runtime, 0, 0, 640, 480) == 0, "set DXGI ROI should succeed");
     require(va_set_frame_limits(runtime, 10, 0) == 0, "set frame limits should succeed");
+
+    va_destroy(runtime);
+}
+
+void test_tensorrt_cache_setter_rejects_empty_path() {
+    VaRuntime* runtime = va_create();
+    require(runtime != nullptr, "va_create should return a runtime handle");
+
+    require(va_set_tensorrt_cache_path(runtime, nullptr) == -1, "null TensorRT cache path should fail");
+    require(
+        std::strstr(va_last_error(runtime), "cache path") != nullptr,
+        "TensorRT cache error should explain the invalid path"
+    );
 
     va_destroy(runtime);
 }
@@ -67,6 +84,7 @@ int main() {
     try {
         test_create_destroy();
         test_setters_accept_valid_values();
+        test_tensorrt_cache_setter_rejects_empty_path();
         test_process_before_open_reports_error();
         test_invalid_video_open_reports_error();
         std::cout << "C API tests passed\n";

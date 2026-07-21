@@ -17,6 +17,7 @@
 
 #include "vision_analyzer/model_input.hpp"
 #include "vision_analyzer/postprocess.hpp"
+#include "vision_analyzer/tensorrt_provider_config.hpp"
 
 namespace vision_analyzer {
 namespace {
@@ -150,31 +151,26 @@ void append_cuda_provider(Ort::SessionOptions& session_options) {
     session_options.AppendExecutionProvider_CUDA(cuda_options);
 }
 
-void append_tensorrt_provider(Ort::SessionOptions& session_options) {
+void append_tensorrt_provider(Ort::SessionOptions& session_options, const std::string& configured_cache_path) {
+    if (configured_cache_path.empty()) {
+        throw std::runtime_error("TensorRT cache path must not be empty");
+    }
+    const std::filesystem::path cache_path = std::filesystem::absolute(configured_cache_path);
+    std::filesystem::create_directories(cache_path);
+    const auto provider_options = make_sm61_tensorrt_provider_options(cache_path.string());
+
+    std::vector<const char*> keys;
+    std::vector<const char*> values;
+    keys.reserve(provider_options.size());
+    values.reserve(provider_options.size());
+    for (const auto& option : provider_options) {
+        keys.push_back(option.key.c_str());
+        values.push_back(option.value.c_str());
+    }
+
     OrtTensorRTProviderOptionsV2* trt_options = nullptr;
     const auto& api = Ort::GetApi();
     Ort::ThrowOnError(api.CreateTensorRTProviderOptions(&trt_options));
-
-    const std::filesystem::path cache_path = std::filesystem::absolute("../../runs/ort_trt_cache");
-    std::filesystem::create_directories(cache_path);
-    const std::string cache = cache_path.string();
-    const std::array<const char*, 6> keys = {
-        "device_id",
-        "trt_fp16_enable",
-        "trt_engine_cache_enable",
-        "trt_engine_cache_path",
-        "trt_max_workspace_size",
-        "trt_min_subgraph_size",
-    };
-    const std::string workspace = std::to_string(1ULL * 1024ULL * 1024ULL * 1024ULL);
-    const std::array<const char*, 6> values = {
-        "0",
-        "1",
-        "1",
-        cache.c_str(),
-        workspace.c_str(),
-        "1",
-    };
 
     try {
         Ort::ThrowOnError(api.UpdateTensorRTProviderOptions(trt_options, keys.data(), values.data(), keys.size()));
@@ -188,8 +184,8 @@ void append_tensorrt_provider(Ort::SessionOptions& session_options) {
 
 class OrtDetector final : public Detector {
 public:
-    OrtDetector(const std::string& model_path, Backend backend)
-        : backend_(backend),
+    explicit OrtDetector(const Options& options)
+        : backend_(options.backend),
           env_(ORT_LOGGING_LEVEL_WARNING, "vision_analyzer"),
           session_(nullptr) {
         session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
@@ -197,15 +193,27 @@ public:
         session_options_.SetIntraOpNumThreads(1);
         session_options_.SetInterOpNumThreads(1);
 
-        if (backend_ == Backend::OrtTensorRt) {
-            append_tensorrt_provider(session_options_);
-            append_cuda_provider(session_options_);
-        } else {
-            append_cuda_provider(session_options_);
+        try {
+            if (backend_ == Backend::OrtTensorRt) {
+                append_tensorrt_provider(session_options_, options.tensorrt_cache_path);
+                append_cuda_provider(session_options_);
+            } else {
+                append_cuda_provider(session_options_);
+            }
+
+            const auto wide_model_path = widen_path(options.model_path);
+            session_ = Ort::Session(env_, wide_model_path.c_str(), session_options_);
+        } catch (const Ort::Exception& error) {
+            if (backend_ == Backend::OrtTensorRt) {
+                throw std::runtime_error(
+                    "ORT TensorRT initialization failed. GTX 1080 Ti production requires "
+                    "ONNX Runtime 1.17.x, TensorRT 8.6.x, CUDA 11.8, and cuDNN 8.9.x: " +
+                    std::string(error.what())
+                );
+            }
+            throw;
         }
 
-        const auto wide_model_path = widen_path(model_path);
-        session_ = Ort::Session(env_, wide_model_path.c_str(), session_options_);
         input_names_ = get_input_names(session_);
         output_names_ = get_output_names(session_);
         if (input_names_.empty() || output_names_.empty()) {
@@ -393,26 +401,26 @@ Backend parse_backend(const std::string& value) {
     throw std::runtime_error("unknown backend: " + value);
 }
 
-std::unique_ptr<Detector> create_detector(Backend backend, const std::string& model_path) {
-    switch (backend) {
+std::unique_ptr<Detector> create_detector(const Options& options) {
+    switch (options.backend) {
     case Backend::OpenCvOnnx:
-        return std::make_unique<OpenCvDetector>(model_path, false);
+        return std::make_unique<OpenCvDetector>(options.model_path, false);
     case Backend::OpenCvCuda:
-        return std::make_unique<OpenCvDetector>(model_path, true);
+        return std::make_unique<OpenCvDetector>(options.model_path, true);
     case Backend::OrtCuda:
 #if defined(VISION_ANALYZER_WITH_ORT)
-        return std::make_unique<OrtDetector>(model_path, backend);
+        return std::make_unique<OrtDetector>(options);
 #else
-        return std::make_unique<OrtUnavailableDetector>(backend);
+        return std::make_unique<OrtUnavailableDetector>(options.backend);
 #endif
     case Backend::OrtTensorRt:
 #if defined(VISION_ANALYZER_WITH_ORT)
-        return std::make_unique<OrtDetector>(model_path, backend);
+        return std::make_unique<OrtDetector>(options);
 #else
-        return std::make_unique<OrtUnavailableDetector>(backend);
+        return std::make_unique<OrtUnavailableDetector>(options.backend);
 #endif
     case Backend::TensorRt:
-        return std::make_unique<TensorRtUnavailableDetector>(model_path);
+        return std::make_unique<TensorRtUnavailableDetector>(options.model_path);
     }
     throw std::runtime_error("unknown backend");
 }

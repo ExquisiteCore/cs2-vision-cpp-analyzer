@@ -17,6 +17,7 @@
 #include "vision_analyzer/postprocess.hpp"
 #include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/runtime_session.hpp"
+#include "vision_analyzer/tensorrt_provider_config.hpp"
 #include "vision_analyzer/tracking.hpp"
 
 using namespace vision_analyzer;
@@ -119,6 +120,35 @@ void test_model_input_rejects_dynamic_or_non_fp32_input() {
     require(
         rejection_message({1, 3, 640, 640}, ModelElementType::Unsupported).find("[1, 3, 640, 640]") != std::string::npos,
         "non-FP32 model input error should include the actual shape"
+    );
+}
+
+void test_sm61_tensorrt_profile_is_fp32_and_cached() {
+    const auto options = make_sm61_tensorrt_provider_options("D:\\cache\\sm61");
+    const auto find_value = [&](const std::string& key) -> std::string {
+        for (const auto& option : options) {
+            if (option.key == key) {
+                return option.value;
+            }
+        }
+        return {};
+    };
+
+    require(find_value("device_id") == "0", "TensorRT should use GPU 0");
+    require(find_value("trt_fp16_enable") == "0", "1080 Ti profile should use FP32");
+    require(find_value("trt_engine_cache_enable") == "1", "TensorRT cache should be enabled");
+    require(find_value("trt_engine_cache_path") == "D:\\cache\\sm61", "cache path should be forwarded");
+    require(find_value("trt_max_workspace_size") == "2147483648", "workspace should be 2 GiB");
+    require(find_value("trt_min_subgraph_size") == "1", "TensorRT should accept single-node subgraphs");
+}
+
+void test_runtime_defaults_to_sm61_tensorrt() {
+    const Options options;
+
+    require(options.backend == Backend::OrtTensorRt, "runtime should default to ORT TensorRT");
+    require(
+        options.tensorrt_cache_path == "ort-trt-cache-sm61-fp32",
+        "runtime should have a writable relative cache default"
     );
 }
 
@@ -599,6 +629,7 @@ void test_runtime_config_file_overrides_tuning_and_io() {
                << "dxgi_roi_y=50\n"
                << "dxgi_roi_width=800\n"
                << "dxgi_roi_height=600\n"
+               << "tensorrt_cache_path=cache-from-config\n"
                << "hid_gain=0.5\n"
                << "hid_deadzone_px=2.5\n"
                << "body_head_anchor_ratio=0.22\n"
@@ -622,6 +653,7 @@ void test_runtime_config_file_overrides_tuning_and_io() {
         options.dxgi_roi.width == 800 && options.dxgi_roi.height == 600,
         "config should set DXGI ROI"
     );
+    require(options.tensorrt_cache_path == "cache-from-config", "config should set TensorRT cache path");
     require_near(options.hid_move_gain, 0.5F, 0.001F, "config should set HID gain");
     require_near(options.hid_deadzone_px, 2.5F, 0.001F, "config should set HID deadzone");
     require_near(options.tuning.body_head_anchor_ratio, 0.22F, 0.001F, "config should set body anchor ratio");
@@ -737,6 +769,8 @@ int main() {
         test_model_class_schema_rejects_wrong_output_dimensions();
         test_model_input_accepts_static_fp32_nchw();
         test_model_input_rejects_dynamic_or_non_fp32_input();
+        test_sm61_tensorrt_profile_is_fp32_and_cached();
+        test_runtime_defaults_to_sm61_tensorrt();
         test_letterbox_accepts_rectangular_target();
         test_model_schema_file_validates_class_order();
         test_model_schema_file_rejects_wrong_class_order();

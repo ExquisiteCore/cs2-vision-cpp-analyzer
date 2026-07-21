@@ -131,6 +131,8 @@ namespace vision_analyzer {
             options.player_side = parse_player_side(require_value(key));
         } else if (key == "--backend") {
             options.backend = parse_backend(require_value(key));
+        } else if (key == "--tensorrt-cache-path") {
+            options.tensorrt_cache_path = require_value(key);
         } else if (key == "--body-head-anchor-ratio") {
             options.tuning.body_head_anchor_ratio = std::stof(require_value(key));
         } else if (key == "--kalman-process-noise") {
@@ -162,6 +164,7 @@ namespace vision_analyzer {
                 << "vision_analyzer --backend opencv-onnx --model best.onnx (--video input.mp4 | --input dxgi) (--hid-port COMx | --dry-run) [--preview]\n"
                 << "  --config PATH    load key=value runtime config before CLI overrides\n"
                 << "  --backend NAME    opencv-onnx, opencv-cuda, ort-cuda, ort-tensorrt, or tensorrt\n"
+                << "  --tensorrt-cache-path PATH  writable ORT TensorRT engine cache directory\n"
                 << "  --schema PATH     validate exported model class schema JSON\n"
                 << "  --input NAME      video or dxgi; --video also selects video input\n"
                 << "  --video PATH      video file for offline tuning\n"

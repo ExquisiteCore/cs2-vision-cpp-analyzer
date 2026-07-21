@@ -21,7 +21,7 @@ void RuntimeSession::open(const Options& options) {
 
     frame_source_ = create_frame_source(options_);
     validate_configured_model_schema(options_, !options_.dry_run);
-    detector_ = create_detector(options_.backend, options_.model_path);
+    detector_ = create_detector(options_);
 
     if (options_.warmup_frames > 0) {
         const cv::Size warmup_size = detector_->input_size();

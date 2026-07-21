@@ -99,6 +99,8 @@ void apply_entry(Options& options, const std::string& key, const std::string& va
         options.status_every_frames = std::stoi(value);
     } else if (key == "backend") {
         options.backend = parse_backend_config(value);
+    } else if (key == "tensorrt_cache_path") {
+        options.tensorrt_cache_path = value;
     } else if (key == "conf" || key == "confidence") {
         options.confidence = std::stof(value);
     } else if (key == "nms" || key == "nms_threshold") {
