@@ -199,6 +199,16 @@ try {
         Assert-Equal ($expected -join '|') ($actual -join '|') 'runtime path precedence'
     }
 
+    Invoke-Test 'project asset root resolves from a nested worktree' {
+        $project = Join-Path $testRoot 'asset-project'
+        New-Item -ItemType Directory -Path (Join-Path $project 'runs') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $project 'videos') -Force | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $project 'tools\cpp_analyzer\.worktrees\feature\packaging\sm61') -Force | Out-Null
+        $start = Join-Path $project 'tools\cpp_analyzer\.worktrees\feature'
+        $resolved = Find-ProjectAssetRoot -StartPath $start
+        Assert-Equal $project $resolved 'nested worktree must resolve the parent project that owns runs and videos'
+    }
+
     Invoke-Test 'dependency lock is complete and uses approved sources' {
         $lockPath = Join-Path (Join-Path $PSScriptRoot '..') 'dependencies.lock.json'
         Assert-True (Test-Path -LiteralPath $lockPath -PathType Leaf) 'dependencies.lock.json must exist'
@@ -295,6 +305,102 @@ try {
             [void][Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors)
             Assert-Equal 0 @($errors).Count "PowerShell syntax errors in $($file.Name): $($errors -join '; ')"
         }
+    }
+
+    Invoke-Test 'verified dependency cache accepts matching hash and quarantines corruption' {
+        $cache = Join-Path $testRoot 'archive-cache'
+        New-Item -ItemType Directory -Path $cache -Force | Out-Null
+        $archive = Join-Path $cache 'fixture.zip'
+        [IO.File]::WriteAllText($archive, 'verified-archive')
+        $component = [pscustomobject]@{
+            id = 'fixture'
+            sourceMode = 'public'
+            archive = 'fixture.zip'
+            url = 'https://developer.download.nvidia.com/fixture.zip'
+            sha256 = Get-FileSha256 -LiteralPath $archive
+        }
+
+        $resolved = Get-VerifiedArchive -Component $component -CacheRoot $cache
+        Assert-Equal $archive $resolved 'matching cached archive must be reused'
+
+        [IO.File]::WriteAllText($archive, 'corrupted')
+        Assert-Throws { Get-VerifiedArchive -Component $component -CacheRoot $cache } 'SHA256|download' 'corrupt cache entry must fail without download permission'
+        Assert-True (-not (Test-Path -LiteralPath $archive)) 'corrupt cache entry must be moved away'
+        Assert-Equal 1 @(Get-ChildItem -LiteralPath $cache -File -Filter 'fixture.zip.bad-*').Count 'one quarantined archive must remain for diagnosis'
+    }
+
+    Invoke-Test 'archive extraction copies runtime DLLs and component licenses only' {
+        $source = Join-Path $testRoot 'archive-source'
+        $archive = Join-Path $testRoot 'runtime-fixture.zip'
+        New-EmptyFile (Join-Path $source 'cuda-package\bin\cudart64_110.dll')
+        New-EmptyFile (Join-Path $source 'cuda-package\include\must-not-copy.dll')
+        [IO.File]::WriteAllText((Join-Path $source 'cuda-package\LICENSE.txt'), 'license text')
+        [IO.File]::WriteAllText((Join-Path $source 'cuda-package\ThirdPartyNotices.txt'), 'third-party notice')
+        Compress-Archive -Path (Join-Path $source '*') -DestinationPath $archive -Force
+
+        $expanded = Join-Path $testRoot 'archive-expanded'
+        Expand-DependencyArchive -ArchivePath $archive -DestinationPath $expanded
+        $runtimeDestination = Join-Path $testRoot 'cuda-runtime'
+        Copy-ComponentRuntimeFiles -ExtractedRoot $expanded -DestinationPath $runtimeDestination -Layout 'bin'
+        Assert-True (Test-Path -LiteralPath (Join-Path $runtimeDestination 'cudart64_110.dll')) 'bin DLL must be flattened into runtime directory'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $runtimeDestination 'must-not-copy.dll'))) 'include DLL must not be copied'
+
+        $licenseDestination = Join-Path $testRoot 'cuda-license'
+        Copy-ComponentLicenses -ExtractedRoot $expanded -DestinationPath $licenseDestination
+        Assert-True (Test-Path -LiteralPath (Join-Path $licenseDestination 'LICENSE.txt')) 'component license must be preserved'
+        Assert-True (Test-Path -LiteralPath (Join-Path $licenseDestination 'ThirdPartyNotices.txt')) 'third-party notice must be preserved'
+    }
+
+    Invoke-Test 'TensorRT runtime copy uses lib DLLs and ignores import libraries' {
+        $source = Join-Path $testRoot 'trt-copy-source'
+        New-EmptyFile (Join-Path $source 'TensorRT-8.6.1.6\lib\nvinfer.dll')
+        New-EmptyFile (Join-Path $source 'TensorRT-8.6.1.6\lib\nvinfer.lib')
+        New-EmptyFile (Join-Path $source 'TensorRT-8.6.1.6\include\must-not-copy.dll')
+        $destination = Join-Path $testRoot 'trt-copy-destination'
+        Copy-ComponentRuntimeFiles -ExtractedRoot $source -DestinationPath $destination -Layout 'lib'
+
+        Assert-True (Test-Path -LiteralPath (Join-Path $destination 'nvinfer.dll')) 'TensorRT lib DLL must be copied'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $destination 'nvinfer.lib'))) 'TensorRT import library must not be copied'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $destination 'must-not-copy.dll'))) 'TensorRT include DLL must not be copied'
+    }
+
+    Invoke-Test 'missing authenticated TensorRT archive is a hard gate' {
+        $installers = Join-Path $testRoot 'empty-installers'
+        New-Item -ItemType Directory -Path $installers -Force | Out-Null
+        Assert-Throws {
+            Resolve-TensorRtArchive -ExplicitPath '' -InstallersRoot $installers
+        } 'TensorRT-8\.6\.1\.6\.Windows10\.x86_64\.cuda-11\.8\.zip|NVIDIA' 'missing TensorRT archive must stop package creation'
+    }
+
+    Invoke-Test 'package builder entry point parses and validates source inputs before mutation' {
+        $builder = Join-Path (Join-Path $PSScriptRoot '..') 'build-portable-package.ps1'
+        Assert-True (Test-Path -LiteralPath $builder -PathType Leaf) 'build-portable-package.ps1 must exist'
+
+        $tokens = $null
+        $errors = $null
+        [void][Management.Automation.Language.Parser]::ParseFile($builder, [ref]$tokens, [ref]$errors)
+        Assert-Equal 0 @($errors).Count "builder syntax errors: $($errors -join '; ')"
+
+        $missingRelease = Join-Path $testRoot 'missing-release-output'
+        $outputRoot = Join-Path $testRoot 'builder-output'
+        $cacheRoot = Join-Path $testRoot 'builder-cache'
+        $oldErrorAction = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $captured = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $builder `
+                -ReleaseRoot $missingRelease -OutputRoot $outputRoot -DependencyCache $cacheRoot 2>&1)
+            $exitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $oldErrorAction
+        }
+        Assert-True ($exitCode -ne 0) 'builder must reject a missing release root'
+        Assert-True (($captured -join ' ') -match 'Release output|release.*exist|构建产物') 'builder must explain the missing release output'
+
+        $content = Get-Content -LiteralPath $builder -Raw
+        foreach ($token in @('Resolve-TensorRtArchive', 'Write-PackageManifest', 'Assert-CompatibleRuntimeFiles', 'tar.exe')) {
+            Assert-True ($content.Contains($token)) "builder must use $token"
+        }
+        Assert-True ($content -notmatch '(?im)\bsetx(?:\.exe)?\b') 'builder must not persist environment changes'
     }
 } finally {
     if (Test-Path -LiteralPath $testRoot) {

@@ -222,6 +222,194 @@ function Get-RuntimePathEntries {
     )
 }
 
+function Find-ProjectAssetRoot {
+    param([Parameter(Mandatory)][string]$StartPath)
+
+    $current = [IO.Path]::GetFullPath($StartPath).TrimEnd('\')
+    if (Test-Path -LiteralPath $current -PathType Leaf) {
+        $current = Split-Path -Parent $current
+    }
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if ((Test-Path -LiteralPath (Join-Path $current 'runs') -PathType Container) -and
+            (Test-Path -LiteralPath (Join-Path $current 'videos') -PathType Container)) {
+            return $current
+        }
+        $parent = [IO.Directory]::GetParent($current)
+        if ($null -eq $parent -or $parent.FullName -eq $current) { break }
+        $current = $parent.FullName.TrimEnd('\')
+    }
+    throw "Could not find a project asset root containing runs/ and videos/ above: $StartPath"
+}
+
+function Get-VerifiedArchive {
+    param(
+        [Parameter(Mandatory)]$Component,
+        [Parameter(Mandatory)][string]$CacheRoot,
+        [switch]$DownloadPublicDependencies
+    )
+
+    $cache = [IO.Path]::GetFullPath($CacheRoot)
+    New-Item -ItemType Directory -Path $cache -Force | Out-Null
+    $archivePath = Join-Path $cache ([string]$Component.archive)
+    $expectedHash = [string]$Component.sha256
+
+    if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+        $actualHash = Get-FileSha256 -LiteralPath $archivePath
+        if ($actualHash -eq $expectedHash) {
+            return $archivePath
+        }
+
+        $quarantine = $archivePath + '.bad-' + [DateTime]::Now.ToString('yyyyMMddHHmmssfff')
+        Move-Item -LiteralPath $archivePath -Destination $quarantine
+        if (-not $DownloadPublicDependencies) {
+            throw "Cached archive SHA256 mismatch for $($Component.id); quarantined as $quarantine. Enable download to reacquire it."
+        }
+    }
+
+    if (-not $DownloadPublicDependencies) {
+        throw "Verified archive is missing for $($Component.id): $archivePath. Enable download to acquire it."
+    }
+    if ([string]$Component.sourceMode -ne 'public') {
+        throw "Automatic download is allowed only for public locked dependencies: $($Component.id)"
+    }
+
+    $curl = Get-Command 'curl.exe' -ErrorAction SilentlyContinue
+    if ($null -eq $curl) {
+        throw 'curl.exe is required for resumable dependency downloads.'
+    }
+    $partial = $archivePath + '.partial'
+    $arguments = @(
+        '--location',
+        '--fail',
+        '--silent',
+        '--show-error',
+        '--retry', '3',
+        '--continue-at', '-',
+        '--output', $partial,
+        [string]$Component.url
+    )
+    & $curl.Source @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Download failed for $($Component.id): $($Component.url)"
+    }
+
+    $actualHash = Get-FileSha256 -LiteralPath $partial
+    if ($actualHash -ne $expectedHash) {
+        $quarantine = $partial + '.bad-' + [DateTime]::Now.ToString('yyyyMMddHHmmssfff')
+        Move-Item -LiteralPath $partial -Destination $quarantine
+        throw "Downloaded archive SHA256 mismatch for $($Component.id); quarantined as $quarantine."
+    }
+    Move-Item -LiteralPath $partial -Destination $archivePath
+    $archivePath
+}
+
+function Expand-DependencyArchive {
+    param(
+        [Parameter(Mandatory)][string]$ArchivePath,
+        [Parameter(Mandatory)][string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
+        throw "Archive does not exist: $ArchivePath"
+    }
+    if (Test-Path -LiteralPath $DestinationPath) {
+        throw "Archive destination must not already exist: $DestinationPath"
+    }
+    New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+    Expand-Archive -LiteralPath $ArchivePath -DestinationPath $DestinationPath -Force
+}
+
+function Copy-ComponentRuntimeFiles {
+    param(
+        [Parameter(Mandatory)][string]$ExtractedRoot,
+        [Parameter(Mandatory)][string]$DestinationPath,
+        [Parameter(Mandatory)][ValidateSet('bin', 'lib')][string]$Layout
+    )
+
+    $root = [IO.Path]::GetFullPath($ExtractedRoot)
+    $layoutDirectories = New-Object Collections.Generic.List[IO.DirectoryInfo]
+    $rootItem = Get-Item -LiteralPath $root
+    if ($rootItem.Name -ieq $Layout) {
+        $layoutDirectories.Add($rootItem)
+    }
+    foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Recurse | Where-Object { $_.Name -ieq $Layout })) {
+        $layoutDirectories.Add($directory)
+    }
+
+    $runtimeFiles = @(
+        $layoutDirectories | ForEach-Object {
+            Get-ChildItem -LiteralPath $_.FullName -File -Filter '*.dll'
+        } | Sort-Object FullName
+    )
+    if ($runtimeFiles.Count -eq 0) {
+        throw "No runtime DLLs found under '$Layout' directories in $root"
+    }
+
+    New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+    foreach ($file in $runtimeFiles) {
+        $destination = Join-Path $DestinationPath $file.Name
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            $sourceHash = Get-FileSha256 -LiteralPath $file.FullName
+            $destinationHash = Get-FileSha256 -LiteralPath $destination
+            if ($sourceHash -ne $destinationHash) {
+                throw "Runtime DLL name collision with different contents: $($file.Name)"
+            }
+            continue
+        }
+        Copy-Item -LiteralPath $file.FullName -Destination $destination
+    }
+}
+
+function Copy-ComponentLicenses {
+    param(
+        [Parameter(Mandatory)][string]$ExtractedRoot,
+        [Parameter(Mandatory)][string]$DestinationPath
+    )
+
+    $licenses = @(
+        Get-ChildItem -LiteralPath $ExtractedRoot -File -Recurse | Where-Object {
+            $_.Name -match '^(LICENSE|NOTICE|EULA)(\..*)?$' -or
+            $_.Name -match '^ThirdPartyNotices?(\..*)?$'
+        } | Sort-Object FullName
+    )
+    if ($licenses.Count -eq 0) {
+        throw "No license or notice file found in component archive: $ExtractedRoot"
+    }
+
+    New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
+    foreach ($license in $licenses) {
+        $destination = Join-Path $DestinationPath $license.Name
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            if ((Get-FileSha256 -LiteralPath $license.FullName) -eq (Get-FileSha256 -LiteralPath $destination)) {
+                continue
+            }
+            $destination = Join-Path $DestinationPath (([IO.Path]::GetFileNameWithoutExtension($license.Name)) + '-' + [guid]::NewGuid().ToString('N') + $license.Extension)
+        }
+        Copy-Item -LiteralPath $license.FullName -Destination $destination
+    }
+}
+
+function Resolve-TensorRtArchive {
+    param(
+        [string]$ExplicitPath,
+        [Parameter(Mandatory)][string]$InstallersRoot
+    )
+
+    $requiredName = 'TensorRT-8.6.1.6.Windows10.x86_64.cuda-11.8.zip'
+    $candidate = if ([string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        Join-Path $InstallersRoot $requiredName
+    } else {
+        [IO.Path]::GetFullPath($ExplicitPath)
+    }
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        throw "Missing NVIDIA TensorRT archive '$requiredName'. Download it from https://developer.nvidia.com/nvidia-tensorrt-8x-download after login/EULA acceptance."
+    }
+    if ([IO.Path]::GetFileName($candidate) -cne $requiredName) {
+        throw "TensorRT archive must use the exact official filename '$requiredName'; found '$([IO.Path]::GetFileName($candidate))'."
+    }
+    [IO.Path]::GetFullPath($candidate)
+}
+
 Export-ModuleMember -Function @(
     'Get-FileSha256',
     'Get-ImmutablePackageFiles',
@@ -229,5 +417,11 @@ Export-ModuleMember -Function @(
     'Test-PackageManifest',
     'Assert-CompatibleRuntimeFiles',
     'Test-TensorRtArchiveLayout',
-    'Get-RuntimePathEntries'
+    'Get-RuntimePathEntries',
+    'Find-ProjectAssetRoot',
+    'Get-VerifiedArchive',
+    'Expand-DependencyArchive',
+    'Copy-ComponentRuntimeFiles',
+    'Copy-ComponentLicenses',
+    'Resolve-TensorRtArchive'
 )

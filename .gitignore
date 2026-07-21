@@ -8,3 +8,6 @@ actions.txt
 cli-*-actions.txt
 hid-calibration.txt
 hid-tuned.cfg
+.packaging-cache/
+packaging/sm61/installers/*.zip
+packaging/sm61/out/
