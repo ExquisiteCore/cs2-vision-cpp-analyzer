@@ -2,6 +2,7 @@
 .vscode/
 build/
 build-ui/
+build-cmake/
 actions.txt
 cli-*-actions.txt
 hid-calibration.txt
