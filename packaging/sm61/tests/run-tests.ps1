@@ -123,6 +123,14 @@ try {
             . (Join-Path $scripts 'common.ps1')
             $result = Test-PackageManifest
             Assert-True $result.Valid 'package-side validator must preserve UTF-8 manifest paths'
+
+            New-EmptyFile (Join-Path $root 'python\cs2_vision_runtime\__pycache__\runtime.cpython-312.pyc')
+            $withPythonCache = Test-PackageManifest
+            Assert-True $withPythonCache.Valid 'Python bytecode cache must be treated as mutable runtime data'
+
+            New-EmptyFile (Join-Path $root 'python\unexpected.bin')
+            $withUnexpectedFile = Test-PackageManifest
+            Assert-True (-not $withUnexpectedFile.Valid) 'non-cache Python files must remain protected by the manifest'
         }
     }
 

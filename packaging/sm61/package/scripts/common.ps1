@@ -49,7 +49,9 @@ function Get-ImmutablePackageFiles {
         $relative = Get-PackageRelativePath -LiteralPath $_.FullName
         $relative -ne 'runtime-manifest.json' -and
         $relative -notlike 'logs/*' -and
-        $relative -notlike 'cache/*'
+        $relative -notlike 'cache/*' -and
+        $relative -notmatch '(?i)(^|/)__pycache__(/|$)' -and
+        $relative -notmatch '(?i)\.py[co]$'
     } | Sort-Object FullName
 }
 
