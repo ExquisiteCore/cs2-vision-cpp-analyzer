@@ -14,6 +14,24 @@ extern "C" {
 
 typedef struct VaRuntime VaRuntime;
 
+#define VA_HID_CALIBRATION_LEVELS 3
+
+typedef struct VaHidCalibrationProfile {
+    int32_t schema_version;
+    int32_t valid;
+    int32_t frame_width;
+    int32_t frame_height;
+    float x_shift_px[VA_HID_CALIBRATION_LEVELS];
+    float x_counts_per_pixel[VA_HID_CALIBRATION_LEVELS];
+    float y_shift_px[VA_HID_CALIBRATION_LEVELS];
+    float y_counts_per_pixel[VA_HID_CALIBRATION_LEVELS];
+    float deadzone_px;
+    int32_t max_step;
+    float noise_px;
+    float quality;
+    int32_t accepted_samples;
+} VaHidCalibrationProfile;
+
 typedef struct VaRuntimeAction {
     int32_t frame_index;
     double timestamp_ms;
@@ -48,6 +66,14 @@ VA_API int32_t va_set_player_side(VaRuntime* runtime, const char* side);
 VA_API int32_t va_set_hid_port(VaRuntime* runtime, const char* port);
 VA_API int32_t va_set_dry_run(VaRuntime* runtime, int32_t dry_run);
 VA_API int32_t va_set_output_enabled(VaRuntime* runtime, int32_t enabled);
+VA_API int32_t va_set_fire_enabled(VaRuntime* runtime, int32_t enabled);
+VA_API int32_t va_set_fire_policy(
+    VaRuntime* runtime,
+    int32_t body_enabled,
+    float head_confidence,
+    float body_confidence,
+    int32_t cooldown_frames
+);
 VA_API int32_t va_set_hid_click(VaRuntime* runtime, int32_t enabled, int32_t cooldown_frames);
 VA_API int32_t va_set_hid_tuning(VaRuntime* runtime, float gain, int32_t max_step, float deadzone_px);
 VA_API int32_t va_set_thresholds(VaRuntime* runtime, float confidence, float nms_threshold);
@@ -56,6 +82,12 @@ VA_API int32_t va_set_frame_limits(VaRuntime* runtime, int32_t max_frames, int32
 
 VA_API int32_t va_open_video(VaRuntime* runtime, const char* video_path, int32_t dry_run);
 VA_API int32_t va_open_dxgi(VaRuntime* runtime, int32_t adapter, int32_t output, int32_t dry_run);
+VA_API int32_t va_calibrate_hid(
+    VaRuntime* runtime,
+    int32_t adapter,
+    int32_t output,
+    VaHidCalibrationProfile* profile
+);
 VA_API int32_t va_process_next(VaRuntime* runtime, VaRuntimeAction* action);
 VA_API int32_t va_stop_all(VaRuntime* runtime);
 VA_API int32_t va_close(VaRuntime* runtime);

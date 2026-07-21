@@ -1,11 +1,13 @@
 #include "vision_analyzer/vision_runtime_c_api.h"
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <functional>
 #include <stdexcept>
 #include <string>
 
+#include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/detector.hpp"
 #include "vision_analyzer/runtime.hpp"
 #include "vision_analyzer/runtime_config.hpp"
@@ -48,6 +50,57 @@ std::string required_string(const char* value, const char* name) {
 
 int32_t lock_state_to_int(vision_analyzer::LockState state) {
     return static_cast<int32_t>(state);
+}
+
+void apply_fire_enabled(VaRuntime* runtime, bool enabled) {
+    runtime->options.fire_enabled = enabled;
+    if (runtime->session.is_open()) {
+        runtime->session.set_fire_enabled(enabled);
+    }
+}
+
+void validate_fire_policy(const vision_analyzer::FirePolicy& policy) {
+    if (!std::isfinite(policy.head_confidence) || policy.head_confidence < 0.0F ||
+        policy.head_confidence > 1.0F) {
+        throw std::runtime_error("head fire confidence must be finite and in [0, 1]");
+    }
+    if (!std::isfinite(policy.body_confidence) || policy.body_confidence < 0.0F ||
+        policy.body_confidence > 1.0F) {
+        throw std::runtime_error("body fire confidence must be finite and in [0, 1]");
+    }
+    if (policy.cooldown_frames < 0) {
+        throw std::runtime_error("fire cooldown frames must be greater than or equal to 0");
+    }
+}
+
+void apply_fire_policy(VaRuntime* runtime, vision_analyzer::FirePolicy policy) {
+    validate_fire_policy(policy);
+    runtime->options.fire_policy = policy;
+    if (runtime->session.is_open()) {
+        runtime->session.set_fire_policy(policy);
+    }
+}
+
+void fill_calibration_profile(
+    const vision_analyzer::HidCalibrationProfile& source,
+    VaHidCalibrationProfile* destination
+) {
+    *destination = VaHidCalibrationProfile{};
+    destination->schema_version = 1;
+    destination->valid = source.valid ? 1 : 0;
+    destination->frame_width = source.frame_width;
+    destination->frame_height = source.frame_height;
+    for (std::size_t level = 0; level < vision_analyzer::kHidCalibrationLevels; ++level) {
+        destination->x_shift_px[level] = source.x.shift_px[level];
+        destination->x_counts_per_pixel[level] = source.x.counts_per_pixel[level];
+        destination->y_shift_px[level] = source.y.shift_px[level];
+        destination->y_counts_per_pixel[level] = source.y.counts_per_pixel[level];
+    }
+    destination->deadzone_px = source.deadzone_px;
+    destination->max_step = source.max_step;
+    destination->noise_px = source.noise_px;
+    destination->quality = source.quality;
+    destination->accepted_samples = source.accepted_samples;
 }
 
 void fill_action(const vision_analyzer::RuntimeStepResult& step, VaRuntimeAction* action) {
@@ -165,17 +218,35 @@ int32_t va_set_output_enabled(VaRuntime* runtime, int32_t enabled) {
     });
 }
 
+int32_t va_set_fire_enabled(VaRuntime* runtime, int32_t enabled) {
+    return call_api(runtime, [&] {
+        apply_fire_enabled(runtime, enabled != 0);
+    });
+}
+
+int32_t va_set_fire_policy(
+    VaRuntime* runtime,
+    int32_t body_enabled,
+    float head_confidence,
+    float body_confidence,
+    int32_t cooldown_frames
+) {
+    return call_api(runtime, [&] {
+        apply_fire_policy(runtime, vision_analyzer::FirePolicy{
+            body_enabled != 0,
+            head_confidence,
+            body_confidence,
+            cooldown_frames,
+        });
+    });
+}
+
 int32_t va_set_hid_click(VaRuntime* runtime, int32_t enabled, int32_t cooldown_frames) {
     return call_api(runtime, [&] {
-        if (cooldown_frames < 0) {
-            throw std::runtime_error("click cooldown must be greater than or equal to 0");
-        }
-        runtime->options.fire_enabled = enabled != 0;
-        runtime->options.fire_policy.cooldown_frames = cooldown_frames;
-        if (runtime->session.is_open()) {
-            runtime->session.set_fire_policy(runtime->options.fire_policy);
-            runtime->session.set_fire_enabled(runtime->options.fire_enabled);
-        }
+        vision_analyzer::FirePolicy policy = runtime->options.fire_policy;
+        policy.cooldown_frames = cooldown_frames;
+        apply_fire_policy(runtime, policy);
+        apply_fire_enabled(runtime, enabled != 0);
     });
 }
 
@@ -229,6 +300,49 @@ int32_t va_open_dxgi(VaRuntime* runtime, int32_t adapter, int32_t output, int32_
     });
 }
 
+int32_t va_calibrate_hid(
+    VaRuntime* runtime,
+    int32_t adapter,
+    int32_t output,
+    VaHidCalibrationProfile* profile
+) {
+    return call_api(runtime, [&] {
+        if (profile == nullptr) {
+            throw std::runtime_error("calibration profile output pointer is null");
+        }
+        *profile = VaHidCalibrationProfile{};
+        if (runtime->session.is_open()) {
+            throw std::runtime_error("close the runtime session before HID calibration");
+        }
+        if (runtime->options.hid_port.empty()) {
+            throw std::runtime_error("HID calibration requires a configured HID port");
+        }
+        if (adapter < 0 || output < 0) {
+            throw std::runtime_error("DXGI adapter and output must be greater than or equal to 0");
+        }
+
+        runtime->options.output_enabled = false;
+        apply_fire_enabled(runtime, false);
+        runtime->session.set_output_enabled(false);
+        runtime->options.input_source = vision_analyzer::InputSource::Dxgi;
+        runtime->options.dxgi_adapter = adapter;
+        runtime->options.dxgi_output = output;
+
+        vision_analyzer::Options calibration_options = runtime->options;
+        calibration_options.calibrate_hid = true;
+        calibration_options.output_enabled = false;
+        calibration_options.fire_enabled = false;
+        vision_analyzer::validate_options(calibration_options);
+        const vision_analyzer::HidCalibrationProfile fitted =
+            vision_analyzer::run_hid_calibration(calibration_options);
+        if (!fitted.valid) {
+            throw std::runtime_error("HID calibration returned an invalid profile");
+        }
+        runtime->options.hid_calibration = fitted;
+        fill_calibration_profile(fitted, profile);
+    });
+}
+
 int32_t va_process_next(VaRuntime* runtime, VaRuntimeAction* action) {
     if (runtime == nullptr) {
         return -1;
@@ -261,6 +375,11 @@ int32_t va_stop_all(VaRuntime* runtime) {
 
 int32_t va_close(VaRuntime* runtime) {
     return call_api(runtime, [&] {
+        runtime->options.output_enabled = false;
+        apply_fire_enabled(runtime, false);
+        if (runtime->session.is_open()) {
+            runtime->session.set_output_enabled(false);
+        }
         runtime->session.close();
     });
 }

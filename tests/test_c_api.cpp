@@ -4,6 +4,9 @@
 
 #include "vision_analyzer/vision_runtime_c_api.h"
 
+static_assert(VA_HID_CALIBRATION_LEVELS == 3);
+static_assert(sizeof(VaHidCalibrationProfile) == 84);
+
 namespace {
 
 void require(bool condition, const char* message) {
@@ -57,6 +60,23 @@ void test_tensorrt_cache_setter_rejects_empty_path() {
     va_destroy(runtime);
 }
 
+void test_fire_and_calibration_api_validation() {
+    VaRuntime* runtime = va_create();
+    require(runtime != nullptr, "runtime should exist");
+    require(va_set_fire_enabled(runtime, 1) == 0, "fire enable should succeed");
+    require(va_set_fire_policy(runtime, 1, 0.35F, 0.45F, 3) == 0,
+            "valid fire policy should succeed");
+    require(va_set_fire_policy(runtime, 1, 1.5F, 0.45F, 3) == -1,
+            "invalid head confidence should fail");
+    require(std::strstr(va_last_error(runtime), "head") != nullptr,
+            "invalid fire policy should explain the head threshold");
+    require(va_calibrate_hid(runtime, 0, 0, nullptr) == -1,
+            "null calibration output should fail before touching hardware");
+    require(std::strstr(va_last_error(runtime), "pointer") != nullptr,
+            "null calibration output should report a pointer error");
+    va_destroy(runtime);
+}
+
 void test_process_before_open_reports_error() {
     VaRuntime* runtime = va_create();
     require(runtime != nullptr, "va_create should return a runtime handle");
@@ -87,6 +107,7 @@ int main() {
         test_create_destroy();
         test_setters_accept_valid_values();
         test_tensorrt_cache_setter_rejects_empty_path();
+        test_fire_and_calibration_api_validation();
         test_process_before_open_reports_error();
         test_invalid_video_open_reports_error();
         std::cout << "C API tests passed\n";

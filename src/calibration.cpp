@@ -153,6 +153,7 @@ int adjust_calibration_probe_count(
 }
 
 HidCalibrationProfile run_hid_calibration(const Options& options) {
+    apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     std::unique_ptr<std::ofstream> owned_stream;
     std::ostream& output = calibration_output_stream(options, owned_stream);
     print_pointer_settings(output, query_windows_pointer_settings());
