@@ -154,12 +154,16 @@ try {
         $root = Join-Path $testRoot 'trt-layout'
         $include = Join-Path $root 'include'
         New-Item -ItemType Directory -Path $include -Force | Out-Null
-        [IO.File]::WriteAllText((Join-Path $include 'NvInferVersion.h'), @'
-#define NV_TENSORRT_MAJOR 8 //!< TensorRT major version.
-#define NV_TENSORRT_MINOR 6 //!< TensorRT minor version.
-#define NV_TENSORRT_PATCH 1 //!< TensorRT patch version.
-#define NV_TENSORRT_BUILD 6 //!< TensorRT build number.
-'@)
+        $officialHeaderLines = @(
+            '#define NV_TENSORRT_MAJOR 8 //!< TensorRT major version.',
+            '#define NV_TENSORRT_MINOR 6 //!< TensorRT minor version.',
+            '#define NV_TENSORRT_PATCH 1 //!< TensorRT patch version.',
+            '#define NV_TENSORRT_BUILD 6 //!< TensorRT build number.'
+        )
+        [IO.File]::WriteAllText(
+            (Join-Path $include 'NvInferVersion.h'),
+            ($officialHeaderLines -join "`r`n") + "`r`n"
+        )
         foreach ($name in @('nvinfer.dll', 'nvinfer_plugin.dll', 'nvonnxparser.dll', 'nvinfer_builder_resource.dll')) {
             New-EmptyFile (Join-Path $root ('lib\' + $name))
         }

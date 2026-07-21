@@ -166,7 +166,7 @@ function Get-TensorRtMacroValue {
         [Parameter(Mandatory)][string]$Name
     )
     $escapedName = [regex]::Escape($Name)
-    $match = [regex]::Match($Header, "(?m)^\s*#define\s+$escapedName\s+(\d+)\b[^\r\n]*$")
+    $match = [regex]::Match($Header, "(?m)^\s*#define\s+$escapedName\s+(\d+)\b[^\r\n]*\r?$")
     if (-not $match.Success) {
         throw "TensorRT version macro is missing: $Name"
     }
