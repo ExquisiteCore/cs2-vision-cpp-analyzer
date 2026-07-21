@@ -101,7 +101,7 @@ Register all three calls in `main()`.
 Run:
 
 ```powershell
-xmake build vision_analyzer_tests
+xmake build -P . vision_analyzer_tests
 ```
 
 Expected: compilation fails because `model_input.hpp`, `ModelInputSpec`, and the `cv::Size` overload do not exist.
@@ -243,8 +243,8 @@ Add `src/model_input.cpp` to both build-system core source lists.
 Run:
 
 ```powershell
-xmake build vision_analyzer_tests
-xmake run vision_analyzer_tests
+xmake build -P . vision_analyzer_tests
+xmake run -P . vision_analyzer_tests
 ```
 
 Expected: build succeeds and all algorithm tests, including the three new tests, pass.
@@ -310,7 +310,7 @@ Add a separate invalid test asserting a null or empty cache path returns `-1` an
 - [ ] **Step 2: Run both test targets and verify RED**
 
 ```powershell
-xmake build vision_analyzer_tests vision_runtime_c_api_tests
+xmake build -P . -a
 ```
 
 Expected: compilation fails because the provider option helper, new option field, and C function do not exist.
@@ -403,9 +403,9 @@ Implement it with `required_string(path, "TensorRT cache path")`, copying the st
 - [ ] **Step 6: Run GREEN verification**
 
 ```powershell
-xmake build vision_analyzer_tests vision_runtime_c_api_tests
-xmake run vision_analyzer_tests
-xmake run vision_runtime_c_api_tests
+xmake build -P . -a
+xmake run -P . vision_analyzer_tests
+xmake run -P . vision_runtime_c_api_tests
 ```
 
 Expected: both targets build and all algorithm/C API tests pass.
@@ -459,7 +459,7 @@ Register the tests in `main()`.
 - [ ] **Step 2: Run the algorithm target and verify RED**
 
 ```powershell
-xmake build vision_analyzer_tests
+xmake build -P . vision_analyzer_tests
 ```
 
 Expected: compilation fails because `dxgi_roi.hpp` and `resolve_dxgi_copy_region` do not exist.
@@ -536,8 +536,8 @@ Construct the mapped BGRA view with the staging/region dimensions, convert it on
 - [ ] **Step 5: Run GREEN verification**
 
 ```powershell
-xmake build vision_analyzer_tests
-xmake run vision_analyzer_tests
+xmake build -P . vision_analyzer_tests
+xmake run -P . vision_analyzer_tests
 ```
 
 Expected: ROI unit tests and all existing algorithm tests pass.
@@ -597,7 +597,7 @@ require(va_set_output_enabled(runtime, 0) == 0, "disarming output should succeed
 - [ ] **Step 2: Run both test targets and verify RED**
 
 ```powershell
-xmake build vision_analyzer_tests vision_runtime_c_api_tests
+xmake build -P . -a
 ```
 
 Expected: compilation fails because `output_enabled`, `set_enabled`, and `va_set_output_enabled` do not exist.
@@ -665,9 +665,9 @@ The wrapper first stores the state in `runtime->options`; if the session is open
 - [ ] **Step 5: Run GREEN verification**
 
 ```powershell
-xmake build vision_analyzer_tests vision_runtime_c_api_tests
-xmake run vision_analyzer_tests
-xmake run vision_runtime_c_api_tests
+xmake build -P . -a
+xmake run -P . vision_analyzer_tests
+xmake run -P . vision_runtime_c_api_tests
 ```
 
 Expected: all sender/default/config/C API tests and existing tests pass.
@@ -767,9 +767,9 @@ git commit -m "docs: define GTX 1080 Ti runtime deployment"
 - [ ] **Step 1: Run the full xmake build and tests**
 
 ```powershell
-xmake build -r vision_runtime vision_analyzer vision_analyzer_tests vision_runtime_c_api_tests
-xmake run vision_analyzer_tests
-xmake run vision_runtime_c_api_tests
+xmake build -P . -r -a
+xmake run -P . vision_analyzer_tests
+xmake run -P . vision_runtime_c_api_tests
 ```
 
 Expected: clean build; algorithm and C API executables report success with no failures.
@@ -779,7 +779,7 @@ Expected: clean build; algorithm and C API executables report success with no fa
 Use the explicit CPU backend because the development RTX 5060 cannot validate the production TensorRT 8.6 stack:
 
 ```powershell
-xmake run vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --schema D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx.schema.json --video D:\project\cs2-vision-trainer\videos\02.mp4 --dry-run --warmup-frames 0 --max-frames 3
+xmake run -P . vision_analyzer --backend opencv-onnx --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --schema D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx.schema.json --video D:\project\cs2-vision-trainer\videos\02.mp4 --dry-run --warmup-frames 0 --max-frames 3
 ```
 
 Expected: three frames process successfully and the reported backend is `opencv-onnx`.
@@ -812,7 +812,7 @@ Run these on the production host after installing the fixed stack and setting `O
 $env:ONNXRUNTIME_ROOT='D:\runtime\sm61\onnxruntime-win-x64-gpu-1.17.3'
 $env:PATH='D:\runtime\sm61\TensorRT-8.6.1.6\lib;D:\runtime\sm61\cudnn-8.9\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin;' + $env:PATH
 xmake f -c --onnxruntime_root=$env:ONNXRUNTIME_ROOT -m release
-xmake build vision_runtime vision_analyzer
+xmake build -a
 xmake run vision_analyzer --backend ort-tensorrt --tensorrt-cache-path D:\runtime\sm61\cache --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --schema D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx.schema.json --input dxgi --dxgi-roi 640 220 640 640 --dry-run --warmup-frames 3 --max-frames 300
 ```
 
