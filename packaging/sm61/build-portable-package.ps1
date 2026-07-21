@@ -10,6 +10,7 @@ param(
     [string]$OutputZip = '',
     [string]$MsvcRedistRoot = '',
     [string]$TensorRtArchive = '',
+    [string]$PythonProjectRoot = '',
     [switch]$DownloadPublicDependencies
 )
 
@@ -126,6 +127,11 @@ function Find-ExtractedOrtRoot {
 }
 
 $projectRoot = Find-ProjectAssetRoot -StartPath $repoRoot
+if ([string]::IsNullOrWhiteSpace($PythonProjectRoot)) {
+    $PythonProjectRoot = $projectRoot
+} else {
+    $PythonProjectRoot = [IO.Path]::GetFullPath($PythonProjectRoot)
+}
 if ([string]::IsNullOrWhiteSpace($ReleaseRoot)) { $ReleaseRoot = Join-Path $repoRoot 'build\windows\x64\release' }
 if ([string]::IsNullOrWhiteSpace($ModelPath)) { $ModelPath = Join-Path $projectRoot 'runs\detect\train-2\weights\best.onnx' }
 if ([string]::IsNullOrWhiteSpace($SchemaPath)) { $SchemaPath = $ModelPath + '.schema.json' }
@@ -156,6 +162,11 @@ Assert-LeafFile -LiteralPath $SchemaPath -Description 'Model schema'
 Assert-LeafFile -LiteralPath $SampleVideoPath -Description 'Sample video'
 Assert-LeafFile -LiteralPath $lockPath -Description 'Dependency lock'
 if (-not (Test-Path -LiteralPath $templateRoot -PathType Container)) { throw "Package template directory does not exist: $templateRoot" }
+$pythonPackageRoot = Join-Path $PythonProjectRoot 'src\cs2_vision_runtime'
+$pythonExample = Join-Path $PythonProjectRoot 'examples\runtime_live_move.py'
+Assert-LeafFile -LiteralPath (Join-Path $pythonPackageRoot '__init__.py') -Description 'Python runtime package initializer'
+Assert-LeafFile -LiteralPath (Join-Path $pythonPackageRoot 'runtime.py') -Description 'Python runtime wrapper'
+Assert-LeafFile -LiteralPath $pythonExample -Description 'Python live runtime example'
 
 $lock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
 if ($lock.profile -ne $profile) { throw "Dependency lock profile mismatch: $($lock.profile)" }
@@ -209,7 +220,7 @@ try {
     [IO.File]::WriteAllText((Join-Path $OutputRoot '.portable-package-root'), $profile, (New-Object Text.UTF8Encoding($false)))
     Copy-Item -Path (Join-Path $templateRoot '*') -Destination $OutputRoot -Recurse -Force
 
-    foreach ($relative in @('app', 'model', 'samples', 'licenses', 'runtime\cuda-11.8', 'runtime\cudnn-8.9', 'runtime\tensorrt-8.6.1.6', 'runtime\msvc-x64', 'logs', 'cache\ort-trt-sm61-fp32')) {
+    foreach ($relative in @('app', 'model', 'samples', 'python\cs2_vision_runtime', 'examples', 'licenses', 'runtime\cuda-11.8', 'runtime\cudnn-8.9', 'runtime\tensorrt-8.6.1.6', 'runtime\msvc-x64', 'logs', 'cache\ort-trt-sm61-fp32')) {
         New-Item -ItemType Directory -Path (Join-Path $OutputRoot $relative) -Force | Out-Null
     }
 
@@ -218,6 +229,10 @@ try {
         Copy-Item -LiteralPath (Join-Path $ReleaseRoot $name) -Destination (Join-Path $app $name) -Force
     }
     Copy-Item -LiteralPath (Join-Path $repoRoot 'include\vision_analyzer\vision_runtime_c_api.h') -Destination (Join-Path $app 'vision_runtime_c_api.h') -Force
+    $pythonDestination = Join-Path $OutputRoot 'python\cs2_vision_runtime'
+    Copy-Item -LiteralPath (Join-Path $pythonPackageRoot '__init__.py') -Destination (Join-Path $pythonDestination '__init__.py') -Force
+    Copy-Item -LiteralPath (Join-Path $pythonPackageRoot 'runtime.py') -Destination (Join-Path $pythonDestination 'runtime.py') -Force
+    Copy-Item -LiteralPath $pythonExample -Destination (Join-Path $OutputRoot 'examples\runtime_live_move.py') -Force
 
     if ([string]::IsNullOrWhiteSpace($OrtRoot)) {
         $OrtRoot = Find-ExtractedOrtRoot -ExtractedRoot $expanded['onnxruntime-gpu']
@@ -310,7 +325,7 @@ try {
     }
 
     $testScript = Join-Path $scriptRoot 'tests\run-tests.ps1'
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $testScript
+    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $testScript -PythonProjectRoot $PythonProjectRoot
     if ($LASTEXITCODE -ne 0) { throw 'Packaging unit and safety tests failed.' }
 
     $tar = Get-Command 'tar.exe' -ErrorAction SilentlyContinue

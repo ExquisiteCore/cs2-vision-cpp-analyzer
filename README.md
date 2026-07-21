@@ -425,19 +425,29 @@ va_set_tensorrt_cache_path(runtime, "ort-trt-cache-sm61-fp32");
 va_set_dxgi_roi(runtime, 640, 220, 640, 640);
 va_set_player_side(runtime, "ct");
 va_set_hid_port(runtime, "COM3");
+VaHidCalibrationProfile calibration;
+if (va_calibrate_hid(runtime, 0, 0, &calibration) != 0) {
+    fprintf(stderr, "%s\n", va_last_error(runtime));
+    va_destroy(runtime);
+    return 1;
+}
+va_set_fire_policy(runtime, 1, 0.35f, 0.45f, 3);
 if (va_open_dxgi(runtime, 0, 0, 0) != 0) {
     fprintf(stderr, "%s\n", va_last_error(runtime));
     va_destroy(runtime);
     return 1;
 }
 va_set_output_enabled(runtime, 1);
+va_set_fire_enabled(runtime, 1);
 
 VaRuntimeAction action;
 while (va_process_next(runtime, &action) == 1) {
     printf("%d %d %d\n", action.frame_index, action.dx, action.dy);
 }
 
+va_set_fire_enabled(runtime, 0);
 va_set_output_enabled(runtime, 0);
+va_stop_all(runtime);
 va_destroy(runtime);
 ```
 
@@ -454,3 +464,19 @@ The main Python repository wraps this DLL with `cs2_vision_runtime.VisionRuntime
 Any wrapper that needs live HID output must bind and call
 `va_set_output_enabled`; an older wrapper remains safely disarmed even though
 `va_process_next` continues returning planned actions.
+
+## GTX 1080 Ti Portable Package
+
+Build the fixed ORT 1.17.3 / TensorRT 8.6.1.6 / CUDA 11.8 package with the
+matching outer Python worktree explicitly selected:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
+  -File packaging\sm61\build-portable-package.ps1 `
+  -PythonProjectRoot 'C:\path\to\cs2-vision-trainer' `
+  -TensorRtArchive 'C:\path\to\TensorRT-8.6.1.6.Windows10.x86_64.cuda-11.8.zip'
+```
+
+The archive includes the stdlib-only Python wrapper and live example, but no
+Python interpreter. All one-click diagnostics remain dry-run and never call an
+output-arming API.

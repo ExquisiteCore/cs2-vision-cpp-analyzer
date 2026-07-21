@@ -1,3 +1,7 @@
+param(
+    [string]$PythonProjectRoot = ''
+)
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
@@ -316,6 +320,11 @@ try {
         Assert-True ($config -match '(?m)^backend=ort-tensorrt\s*$') 'TensorRT must be the config backend'
         Assert-True ($config -match '(?m)^tensorrt_cache_path=cache/ort-trt-sm61-fp32\s*$') 'cache path must be package-relative'
         Assert-True ($config -match '(?m)^output_enabled=false\s*$') 'output must default disabled'
+        Assert-True ($config -match '(?m)^fire_enabled=false\s*$') 'automatic fire must default disabled'
+        Assert-True ($config -match '(?m)^body_fire_enabled=true\s*$') 'body fallback policy must be explicit'
+        Assert-True ($config -match '(?m)^head_fire_confidence=0\.35\s*$') 'head fire confidence must be fixed'
+        Assert-True ($config -match '(?m)^body_fire_confidence=0\.45\s*$') 'body fire confidence must be fixed'
+        Assert-True ($config -match '(?m)^hid_click_cooldown_frames=3\s*$') 'aggressive fire cooldown must be three frames'
         Assert-True ($config -match '(?m)^input=dxgi\s*$') 'DXGI must remain the live input default'
 
         $scriptFiles = @(Get-ChildItem -LiteralPath $templateRoot -File -Recurse | Where-Object { $_.Extension -in @('.ps1', '.cmd') })
@@ -333,6 +342,15 @@ try {
 
         $setup = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\setup-and-test.ps1') -Raw
         Assert-True ($setup -notmatch '(?i)test-dxgi\.ps1') 'one-click setup must not run DXGI automatically'
+
+        $common = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\common.ps1') -Raw
+        foreach ($relative in @(
+            'python\cs2_vision_runtime\__init__.py',
+            'python\cs2_vision_runtime\runtime.py',
+            'examples\runtime_live_move.py'
+        )) {
+            Assert-True ($common.Contains($relative)) "static package verification must require $relative"
+        }
 
         $cmdName = ([string][char]0x4E00) + [char]0x952E + [char]0x68C0 + [char]0x67E5 + [char]0x5E76 + [char]0x6D4B + [char]0x8BD5 + '.cmd'
         $cmd = Get-Content -LiteralPath (Join-Path $templateRoot $cmdName) -Raw
@@ -444,10 +462,39 @@ try {
         Assert-True (($captured -join ' ') -match 'Release output|release.*exist|构建产物') 'builder must explain the missing release output'
 
         $content = Get-Content -LiteralPath $builder -Raw
-        foreach ($token in @('Resolve-TensorRtArchive', 'Write-PackageManifest', 'Assert-CompatibleRuntimeFiles', 'tar.exe')) {
+        foreach ($token in @(
+            'Resolve-TensorRtArchive',
+            'Write-PackageManifest',
+            'Assert-CompatibleRuntimeFiles',
+            'tar.exe',
+            'PythonProjectRoot',
+            'src\cs2_vision_runtime',
+            'examples\runtime_live_move.py',
+            'python\cs2_vision_runtime'
+        )) {
             Assert-True ($content.Contains($token)) "builder must use $token"
         }
         Assert-True ($content -notmatch '(?im)\bsetx(?:\.exe)?\b') 'builder must not persist environment changes'
+    }
+
+    Invoke-Test 'Python live example has explicit arming and cleanup boundaries' {
+        if ([string]::IsNullOrWhiteSpace($PythonProjectRoot)) {
+            return
+        }
+        $resolvedPythonRoot = [IO.Path]::GetFullPath($PythonProjectRoot)
+        $example = Join-Path $resolvedPythonRoot 'examples\runtime_live_move.py'
+        Assert-True (Test-Path -LiteralPath $example -PathType Leaf) 'Python live example must exist'
+        $content = Get-Content -LiteralPath $example -Raw
+        foreach ($token in @(
+            'calibrate_hid',
+            'set_output_enabled',
+            'set_fire_enabled',
+            'finally',
+            '--enable-live-output',
+            'ROOT / "model"'
+        )) {
+            Assert-True ($content.Contains($token)) "Python live example must contain $token"
+        }
     }
 } finally {
     if (Test-Path -LiteralPath $testRoot) {

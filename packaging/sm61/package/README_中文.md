@@ -57,5 +57,34 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\collect-diagno
 
 ## 接入 DLL
 
-头文件和导入库位于 `app`。宿主程序必须自己实现热键和安全逻辑；只有确认可
-输出后才调用 `va_set_output_enabled(runtime, 1)`。新建运行时默认保持禁止输出。
+头文件和导入库位于 `app`。Python 包装位于 `python\cs2_vision_runtime`，无第三方
+Python 依赖；本压缩包不捆绑 Python 解释器。
+
+宿主必须按以下顺序调用：
+
+1. 设置模型、RP2350 串口和玩家阵营。
+2. 进入对局并保持画面稳定，然后调用一次 `calibrate_hid()`。
+3. 设置头/身体开火策略，再打开 DXGI。
+4. 分别调用 `set_output_enabled(True)` 和 `set_fire_enabled(True)`。
+5. 停止或异常退出时，依次关闭开火、关闭移动输出并调用 `stop_all()`。
+
+两个开关相互独立。新建运行时默认都关闭；只有 Python 明确开启后才会产生物理
+移动或点击。头部优先，身体只在躯干有效区域内作为低优先级兜底。
+
+## 运行 Python 示例
+
+先进入 CS2 对局并让画面稳定，在本目录打开 PowerShell：
+
+```powershell
+$env:PYTHONPATH=(Resolve-Path '.\python').Path
+$env:CS2_VISION_RUNTIME_DLL=(Resolve-Path '.\app\vision_runtime.dll').Path
+python .\examples\runtime_live_move.py --hid-port COM3 --player-side ct --enable-live-output --click
+```
+
+把 `COM3` 改为 RP2350 的实际串口。去掉 `--click` 时只自动瞄准、不自动开火；
+不加 `--enable-live-output` 时程序会在标定前退出，完全不触碰硬件。包装层会自动
+加载包内 CUDA 11.8、cuDNN 8.9、TensorRT 8.6.1.6 和 MSVC 私有运行库，不需要
+修改系统 PATH。按 `Ctrl+C` 会通过 `finally` 撤销开火和移动输出。
+
+`一键检查并测试.cmd` 始终只做安全 dry-run，与上述真实 Python 会话是两条独立
+路径，不会自动开始标定或武装输出。
