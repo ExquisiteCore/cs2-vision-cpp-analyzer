@@ -213,6 +213,25 @@ try {
         Assert-Equal $project $resolved 'nested worktree must resolve the parent project that owns runs and videos'
     }
 
+    Invoke-Test 'latest compatible x64 MSVC v14 private runtime is selected' {
+        $vsRoot = Join-Path $testRoot 'fake-visual-studio'
+        $vc143 = Join-Path $vsRoot 'VC\Redist\MSVC\14.44.100\x64\Microsoft.VC143.CRT'
+        $vc145 = Join-Path $vsRoot 'VC\Redist\MSVC\14.50.200\x64\Microsoft.VC145.CRT'
+        $oneCore = Join-Path $vsRoot 'VC\Redist\MSVC\14.60.300\onecore\x64\Microsoft.VC146.CRT'
+        foreach ($directory in @($vc143, $vc145, $oneCore)) {
+            foreach ($name in @('MSVCP140.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', 'CONCRT140.dll')) {
+                New-EmptyFile (Join-Path $directory $name)
+            }
+        }
+        $incomplete = Join-Path $vsRoot 'VC\Redist\MSVC\14.70.400\x64\Microsoft.VC147.CRT'
+        foreach ($name in @('MSVCP140.dll', 'VCRUNTIME140.dll', 'CONCRT140.dll')) {
+            New-EmptyFile (Join-Path $incomplete $name)
+        }
+
+        $resolved = Find-MsvcPrivateRuntimeRoot -SearchRoots @($vsRoot)
+        Assert-Equal $vc145 $resolved 'latest complete desktop x64 v14 runtime should be selected; onecore and incomplete candidates must be excluded'
+    }
+
     Invoke-Test 'dependency lock is complete and uses approved sources' {
         $lockPath = Join-Path (Join-Path $PSScriptRoot '..') 'dependencies.lock.json'
         Assert-True (Test-Path -LiteralPath $lockPath -PathType Leaf) 'dependencies.lock.json must exist'
@@ -234,6 +253,8 @@ try {
         $actualIds = @($lock.components | ForEach-Object { [string]$_.id } | Sort-Object)
         Assert-Equal ($expectedIds -join '|') ($actualIds -join '|') 'locked component IDs'
         Assert-Equal $actualIds.Count @($actualIds | Select-Object -Unique).Count 'component IDs must be unique'
+        $msvcComponent = @($lock.components | Where-Object { $_.id -eq 'msvc-crt' })[0]
+        Assert-Equal '14.x-v14-compatible' ([string]$msvcComponent.version) 'MSVC lock must allow the binary-compatible v14 redistributable family'
 
         $approvedHosts = @('github.com', 'developer.download.nvidia.com', 'developer.nvidia.com')
         foreach ($component in @($lock.components)) {

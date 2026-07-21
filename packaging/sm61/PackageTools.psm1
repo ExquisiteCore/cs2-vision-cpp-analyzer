@@ -242,6 +242,63 @@ function Find-ProjectAssetRoot {
     throw "Could not find a project asset root containing runs/ and videos/ above: $StartPath"
 }
 
+function Find-MsvcPrivateRuntimeRoot {
+    param([Parameter(Mandatory)][string[]]$SearchRoots)
+
+    $requiredDlls = @('MSVCP140.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll', 'CONCRT140.dll')
+    $candidates = New-Object Collections.Generic.List[object]
+    foreach ($searchRoot in $SearchRoots) {
+        if ([string]::IsNullOrWhiteSpace($searchRoot) -or -not (Test-Path -LiteralPath $searchRoot -PathType Container)) {
+            continue
+        }
+        foreach ($directory in @(Get-ChildItem -LiteralPath $searchRoot -Directory -Recurse -Filter 'Microsoft.VC14*.CRT' -ErrorAction SilentlyContinue)) {
+            if ($null -eq $directory.Parent -or $directory.Parent.Name -ine 'x64') {
+                continue
+            }
+
+            $underOneCore = $false
+            $ancestor = $directory.Parent
+            while ($null -ne $ancestor) {
+                if ($ancestor.Name -ieq 'onecore') {
+                    $underOneCore = $true
+                    break
+                }
+                $ancestor = $ancestor.Parent
+            }
+            if ($underOneCore) { continue }
+
+            $complete = $true
+            foreach ($name in $requiredDlls) {
+                if (-not (Test-Path -LiteralPath (Join-Path $directory.FullName $name) -PathType Leaf)) {
+                    $complete = $false
+                    break
+                }
+            }
+            if (-not $complete) { continue }
+
+            $versionMatch = [regex]::Match($directory.FullName, '(?i)[\\/]MSVC[\\/](?<version>\d+(?:\.\d+){1,3})[\\/]')
+            if (-not $versionMatch.Success) { continue }
+            $version = $null
+            if (-not [version]::TryParse($versionMatch.Groups['version'].Value, [ref]$version)) { continue }
+
+            $candidates.Add([pscustomobject]@{
+                Version = $version
+                FullName = $directory.FullName
+            })
+        }
+    }
+
+    $selected = @(
+        $candidates |
+            Sort-Object -Property @{ Expression = { $_.Version }; Descending = $true }, @{ Expression = { $_.FullName }; Descending = $true } |
+            Select-Object -First 1
+    )
+    if ($selected.Count -eq 0) {
+        throw 'A complete Microsoft.VC14*.CRT desktop x64 private runtime was not found under Visual Studio.'
+    }
+    [string]$selected[0].FullName
+}
+
 function Get-VerifiedArchive {
     param(
         [Parameter(Mandatory)]$Component,
@@ -421,6 +478,7 @@ Export-ModuleMember -Function @(
     'Test-TensorRtArchiveLayout',
     'Get-RuntimePathEntries',
     'Find-ProjectAssetRoot',
+    'Find-MsvcPrivateRuntimeRoot',
     'Get-VerifiedArchive',
     'Expand-DependencyArchive',
     'Copy-ComponentRuntimeFiles',

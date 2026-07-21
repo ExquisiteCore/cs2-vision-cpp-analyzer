@@ -6,7 +6,7 @@
 
 **Architecture:** A repository-side PowerShell builder downloads and verifies official redistributable archives, stages private application-local DLL directories, copies immutable templates, generates a SHA256 manifest, and creates a ZIP. Package-side PowerShell scripts construct a child-process-only `PATH`, validate the package and GPU, then run safe video and DXGI diagnostics without arming HID output.
 
-**Tech Stack:** PowerShell 5.1-compatible scripts, Windows CMD launcher, ONNX Runtime GPU 1.17.3, CUDA 11.8 redistributables, cuDNN 8.9.7.29, TensorRT 8.6.1.6, MSVC v143 CRT, native `tar.exe`, existing C++ CLI/DLL.
+**Tech Stack:** PowerShell 5.1-compatible scripts, Windows CMD launcher, ONNX Runtime GPU 1.17.3, CUDA 11.8 redistributables, cuDNN 8.9.7.29, TensorRT 8.6.1.6, MSVC v14-compatible CRT, native `tar.exe`, existing C++ CLI/DLL.
 
 ---
 
@@ -353,7 +353,7 @@ output ZIP, MSVC redistributable root, and TensorRT archive. It:
 4. copies ORT 1.17.3 provider DLLs and license;
 5. extracts and flattens the four CUDA components, cuDNN, and TensorRT runtime
    DLLs into their versioned directories;
-6. locates the newest local `Microsoft.VC143.CRT` and copies its DLLs/license;
+6. locates the newest complete desktop x64 `Microsoft.VC14*.CRT` and copies its DLLs/license;
 7. trims five seconds from `videos/02.mp4` with installed `ffmpeg`, failing
    clearly if ffmpeg is absent;
 8. copies `best.onnx` and its exact schema;

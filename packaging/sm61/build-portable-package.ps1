@@ -79,26 +79,6 @@ function Get-DefaultOrtRoot {
     ''
 }
 
-function Get-DefaultMsvcRedistRoot {
-    $roots = @(
-        (Join-Path $env:ProgramFiles 'Microsoft Visual Studio'),
-        (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio')
-    ) | Select-Object -Unique
-    $candidates = New-Object Collections.Generic.List[IO.DirectoryInfo]
-    foreach ($root in $roots) {
-        if (Test-Path -LiteralPath $root -PathType Container) {
-            foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Recurse -Filter 'Microsoft.VC143.CRT' -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\x64\\' })) {
-                $candidates.Add($directory)
-            }
-        }
-    }
-    $selected = @($candidates | Sort-Object FullName -Descending | Select-Object -First 1)
-    if ($selected.Count -eq 0) {
-        throw 'Microsoft.VC143.CRT x64 private deployment files were not found under Visual Studio.'
-    }
-    $selected[0].FullName
-}
-
 function Copy-FlatFiles {
     param(
         [Parameter(Mandatory)][IO.FileInfo[]]$Files,
@@ -256,7 +236,15 @@ try {
     Copy-ComponentRuntimeFiles -ExtractedRoot $tensorRtExpanded -DestinationPath (Join-Path $OutputRoot 'runtime\tensorrt-8.6.1.6') -Layout 'lib'
     Copy-ComponentLicenses -ExtractedRoot $tensorRtExpanded -DestinationPath (Join-Path $OutputRoot 'licenses\tensorrt')
 
-    if ([string]::IsNullOrWhiteSpace($MsvcRedistRoot)) { $MsvcRedistRoot = Get-DefaultMsvcRedistRoot }
+    if ([string]::IsNullOrWhiteSpace($MsvcRedistRoot)) {
+        $msvcSearchRoots = @()
+        foreach ($programFilesRoot in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+            if (-not [string]::IsNullOrWhiteSpace($programFilesRoot)) {
+                $msvcSearchRoots += Join-Path $programFilesRoot 'Microsoft Visual Studio'
+            }
+        }
+        $MsvcRedistRoot = Find-MsvcPrivateRuntimeRoot -SearchRoots @($msvcSearchRoots | Select-Object -Unique)
+    }
     $MsvcRedistRoot = [IO.Path]::GetFullPath($MsvcRedistRoot)
     $msvcDlls = @(Get-ChildItem -LiteralPath $MsvcRedistRoot -File -Filter '*.dll')
     $msvcDestination = Join-Path $OutputRoot 'runtime\msvc-x64'
@@ -269,7 +257,7 @@ try {
     foreach ($manifestFile in @(Get-ChildItem -LiteralPath $MsvcRedistRoot -File -Filter '*.manifest')) {
         Copy-Item -LiteralPath $manifestFile.FullName -Destination (Join-Path $msvcLicense $manifestFile.Name) -Force
     }
-    $sourceText = "Microsoft VC143 CRT private deployment files copied from:`r`n$MsvcRedistRoot`r`nGoverned by the installed Visual Studio license and redistribution terms.`r`n"
+    $sourceText = "Microsoft MSVC v14-compatible CRT private deployment files copied from:`r`n$MsvcRedistRoot`r`nGoverned by the installed Visual Studio license and redistribution terms.`r`n"
     [IO.File]::WriteAllText((Join-Path $msvcLicense 'SOURCE.txt'), $sourceText, (New-Object Text.UTF8Encoding($false)))
 
     Copy-Item -LiteralPath $ModelPath -Destination (Join-Path $OutputRoot 'model\best.onnx') -Force
