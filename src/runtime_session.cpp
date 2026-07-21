@@ -32,13 +32,13 @@ void RuntimeSession::open(const Options& options) {
         std::cout << "warmup_frames=" << options_.warmup_frames << '\n';
     }
 
-    aim_controller_ = std::make_unique<AimController>(AimControllerOptions{
-        options_.hid_move_gain,
-        options_.hid_max_step,
-        options_.hid_deadzone_px,
-        options_.hid_click_enabled,
-        options_.hid_click_cooldown_frames,
-    });
+    AimControllerOptions aim_options;
+    aim_options.move_gain = options_.hid_move_gain;
+    aim_options.max_step = options_.hid_max_step;
+    aim_options.deadzone_px = options_.hid_deadzone_px;
+    aim_options.fire_enabled = options_.hid_click_enabled;
+    aim_options.fire_policy.cooldown_frames = options_.hid_click_cooldown_frames;
+    aim_controller_ = std::make_unique<AimController>(aim_options);
 
     if (!options_.action_log_path.empty()) {
         action_log_.open(options_.action_log_path);

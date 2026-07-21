@@ -50,6 +50,13 @@ struct RuntimeTuningConfig {
     float kalman_error_covariance = 8.0F;
 };
 
+struct FirePolicy {
+    bool body_enabled = true;
+    float head_confidence = 0.35F;
+    float body_confidence = 0.45F;
+    int cooldown_frames = 3;
+};
+
 struct Options {
     std::string model_path = "../../runs/detect/train/weights/best.onnx";
     std::string model_schema_path;

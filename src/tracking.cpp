@@ -278,7 +278,7 @@ float TargetSelector::score(
     const cv::Point2f frame_center(frame_size.width / 2.0F, frame_size.height / 2.0F);
     const float distance = point_distance(track.predicted_center, frame_center);
     const float normalized_distance = distance / std::max(1.0F, frame_diagonal(frame_size));
-    const float class_bias = is_head(track.detection.class_id) ? 0.70F : 1.00F;
+    const float class_bias = is_head(track.detection.class_id) ? 0.65F : 1.00F;
     const float confidence_factor = 1.0F / std::max(0.05F, track.confidence_ema);
     const float stability_factor = 1.0F - std::min(0.28F, track.stability * 0.28F);
     const float switch_factor = active_track_id.has_value() && *active_track_id != track.track_id ? 1.22F : 0.88F;

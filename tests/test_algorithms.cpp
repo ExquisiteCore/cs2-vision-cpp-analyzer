@@ -350,6 +350,40 @@ void test_target_selector_switches_when_challenger_is_clearly_better() {
     require(selected->track_id == 8, "selector should switch to clearly better target");
 }
 
+void test_target_selector_prefers_head_over_comparable_body() {
+    TargetSelector selector;
+    const cv::Size frame_size(1920, 1080);
+    const TrackedDetection body{
+        20,
+        Detection{0, "ct_body", 0.90F, cv::Rect(1008, 520, 40, 40)},
+        {1028.0F, 540.0F},
+        {1028.0F, 540.0F},
+        {0.0F, 0.0F},
+        5,
+        5,
+        0,
+        0.90F,
+        0.60F,
+    };
+    const TrackedDetection head{
+        21,
+        Detection{1, "ct_head", 0.90F, cv::Rect(1040, 520, 40, 40)},
+        {1060.0F, 540.0F},
+        {1060.0F, 540.0F},
+        {0.0F, 0.0F},
+        5,
+        5,
+        0,
+        0.90F,
+        0.60F,
+    };
+
+    const auto selected = selector.select({body, head}, frame_size, std::nullopt);
+    require(selected.has_value(), "selector should return a target");
+    require(selected->track_id == head.track_id,
+            "head priority should beat a slightly closer comparable body");
+}
+
 void test_track_manager_smooths_velocity_spikes() {
     TrackManager manager;
     const cv::Size frame_size(1920, 1080);
@@ -551,7 +585,6 @@ void test_aim_controller_scales_and_clamps_target_offset() {
     AimControllerOptions options;
     options.move_gain = 0.5F;
     options.max_step = 12;
-    options.click_enabled = false;
     AimController controller(options);
 
     FrameReport report{
@@ -751,8 +784,8 @@ void test_aim_controller_holds_when_no_target() {
 
 void test_aim_controller_respects_click_cooldown() {
     AimControllerOptions options;
-    options.click_enabled = true;
-    options.click_cooldown_frames = 2;
+    options.fire_enabled = true;
+    options.fire_policy.cooldown_frames = 2;
     AimController controller(options);
 
     FrameReport report{
@@ -786,6 +819,102 @@ void test_aim_controller_respects_click_cooldown() {
     require(first.click_left, "first fire candidate should click");
     require(!second.click_left, "second frame should be blocked by cooldown");
     require(!third.click_left, "third frame should still be blocked while cooldown counts down");
+}
+
+HidCalibrationProfile make_valid_hid_profile() {
+    HidCalibrationProfile profile;
+    profile.valid = true;
+    profile.frame_width = 1920;
+    profile.frame_height = 1080;
+    profile.x = {{8.0F, 32.0F, 96.0F}, {2.0F, 3.0F, 4.0F}};
+    profile.y = {{8.0F, 32.0F, 96.0F}, {1.0F, 1.5F, 2.0F}};
+    profile.deadzone_px = 1.0F;
+    profile.max_step = 120;
+    return profile;
+}
+
+FrameReport make_target_report(Detection detection, cv::Point2f offset) {
+    TargetFrame target{};
+    target.detection = std::move(detection);
+    target.offset = offset;
+    target.analysis_point = {960.0F + offset.x, 540.0F + offset.y};
+    target.lock_state = LockState::Acquiring;
+    return FrameReport{1, 16.0, 60.0, InferenceTiming{}, 1, target};
+}
+
+FrameReport make_body_report(cv::Point2f offset, float confidence = 0.80F) {
+    return make_target_report(
+        Detection{0, "ct_body", confidence, cv::Rect(900, 450, 120, 180)},
+        offset
+    );
+}
+
+void test_aim_controller_uses_calibrated_axes() {
+    AimControllerOptions options;
+    options.calibration = make_valid_hid_profile();
+    AimController controller(options);
+    const AimCommand command = controller.plan(make_target_report(
+        Detection{1, "ct_head", 0.90F, cv::Rect(970, 520, 40, 40)},
+        cv::Point2f{20.0F, -20.0F}
+    ));
+    require(command.dx != command.dy, "per-axis curves should produce independent steps");
+}
+
+void test_head_fires_on_first_frame_inside_box() {
+    AimController controller;
+    controller.set_fire_policy(FirePolicy{true, 0.35F, 0.45F, 3});
+    controller.set_fire_enabled(true);
+    const AimCommand command = controller.plan(make_target_report(
+        Detection{1, "ct_head", 0.80F, cv::Rect(940, 520, 40, 40)},
+        cv::Point2f{0.0F, 0.0F}
+    ));
+    require(command.click_left, "head box should fire on its first qualifying frame");
+}
+
+void test_body_fires_only_in_torso_when_enabled() {
+    AimController controller;
+    controller.set_fire_policy(FirePolicy{true, 0.35F, 0.45F, 3});
+    controller.set_fire_enabled(true);
+    require(controller.plan(make_body_report(cv::Point2f{0.0F, 0.0F})).click_left,
+            "centered torso should fire");
+    controller.set_fire_enabled(false);
+    require(!controller.plan(make_body_report(cv::Point2f{0.0F, 0.0F})).click_left,
+            "fire gate should suppress body clicks");
+}
+
+void test_body_does_not_fire_outside_torso_region() {
+    AimController controller;
+    controller.set_fire_policy(FirePolicy{true, 0.35F, 0.45F, 3});
+    controller.set_fire_enabled(true);
+    const auto report = make_target_report(
+        Detection{0, "ct_body", 0.80F, cv::Rect(700, 450, 120, 180)},
+        cv::Point2f{0.0F, 0.0F}
+    );
+    require(!controller.plan(report).click_left,
+            "body should not fire when the crosshair is outside the torso");
+}
+
+void test_fire_policy_enforces_body_flag_and_class_confidence() {
+    AimController controller;
+    controller.set_fire_enabled(true);
+    controller.set_fire_policy(FirePolicy{false, 0.35F, 0.45F, 3});
+    require(!controller.plan(make_body_report({0.0F, 0.0F})).click_left,
+            "body-disabled policy must suppress a centered torso");
+    controller.set_fire_policy(FirePolicy{true, 0.35F, 0.85F, 3});
+    require(!controller.plan(make_body_report({0.0F, 0.0F}, 0.80F)).click_left,
+            "body confidence below policy threshold must not fire");
+}
+
+void test_fire_cooldown_and_disable_reset() {
+    AimController controller;
+    controller.set_fire_policy(FirePolicy{true, 0.35F, 0.45F, 3});
+    controller.set_fire_enabled(true);
+    const FrameReport report = make_body_report({0.0F, 0.0F});
+    require(controller.plan(report).click_left, "first torso frame should fire");
+    require(!controller.plan(report).click_left, "cooldown should suppress next frame");
+    controller.set_fire_enabled(false);
+    controller.set_fire_enabled(true);
+    require(controller.plan(report).click_left, "disabling fire should clear cooldown");
 }
 
 class RecordingHidClient final : public HidClient {
@@ -910,6 +1039,7 @@ int main() {
         test_track_manager_keeps_id_for_small_motion();
         test_target_selector_prefers_active_track_when_scores_are_close();
         test_target_selector_switches_when_challenger_is_clearly_better();
+        test_target_selector_prefers_head_over_comparable_body();
         test_track_manager_smooths_velocity_spikes();
         test_target_anchor_point_uses_body_top_fallback();
         test_fuse_head_body_detections_suppresses_body_when_head_matches();
@@ -930,6 +1060,12 @@ int main() {
         test_calibrated_hid_curve_supports_inverted_axis_deadzone_and_clamp();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
+        test_aim_controller_uses_calibrated_axes();
+        test_head_fires_on_first_frame_inside_box();
+        test_body_fires_only_in_torso_when_enabled();
+        test_body_does_not_fire_outside_torso_region();
+        test_fire_policy_enforces_body_flag_and_class_confidence();
+        test_fire_cooldown_and_disable_reset();
         test_hid_action_sender_requires_arming_and_stops_when_disarmed();
         test_runtime_session_starts_closed();
         test_runtime_status_includes_parseable_timing_metrics();
