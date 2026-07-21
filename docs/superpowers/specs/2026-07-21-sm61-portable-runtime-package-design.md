@@ -83,6 +83,7 @@ cs2-vision-runtime-sm61/
 │   └── smoke-test.mp4
 ├── scripts/
 │   ├── common.ps1
+│   ├── setup-and-test.ps1
 │   ├── verify-runtime.ps1
 │   ├── test-video.ps1
 │   ├── test-dxgi.ps1
