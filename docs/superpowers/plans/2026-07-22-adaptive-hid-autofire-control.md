@@ -61,8 +61,8 @@ Run from the C++ worktree:
 
 ```powershell
 git status --short --branch
-xmake run vision_analyzer_tests
-xmake run vision_runtime_c_api_tests
+xmake run -P . vision_analyzer_tests
+xmake run -P . vision_runtime_c_api_tests
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging\sm61\tests\run-tests.ps1
 ```
 
@@ -138,7 +138,7 @@ Register both functions in `main()`.
 - [ ] **Step 2: Run the test to verify RED**
 
 ```powershell
-xmake build vision_analyzer_tests
+xmake -P . vision_analyzer_tests
 ```
 
 Expected: compilation fails because `hid_calibration_profile.hpp` does not exist.
@@ -217,8 +217,8 @@ Add `src/hid_calibration_profile.cpp` to `runtime_core_files` in `xmake.lua` and
 - [ ] **Step 6: Run GREEN verification**
 
 ```powershell
-xmake build vision_analyzer_tests
-xmake run vision_analyzer_tests
+xmake -P . vision_analyzer_tests
+xmake run -P . vision_analyzer_tests
 ```
 
 Expected: compilation succeeds and all algorithm tests pass.
@@ -283,7 +283,7 @@ Register both tests in `main()`.
 - [ ] **Step 2: Run the algorithm test to verify RED**
 
 ```powershell
-xmake build vision_analyzer_tests
+xmake -P . vision_analyzer_tests
 ```
 
 Expected: compilation fails because the extended sample fields and
@@ -353,7 +353,7 @@ test.
 - [ ] **Step 6: Run GREEN verification**
 
 ```powershell
-xmake run vision_analyzer_tests
+xmake run -P . vision_analyzer_tests
 ```
 
 Expected: signed normal/inverted curves pass, invalid samples are rejected, and
@@ -473,7 +473,7 @@ that the head wins with the new `0.65` multiplier.
 - [ ] **Step 2: Run tests to verify RED**
 
 ```powershell
-xmake build vision_analyzer_tests
+xmake -P . vision_analyzer_tests
 ```
 
 Expected: compilation fails because calibration/fire policy setters are absent.
@@ -544,7 +544,7 @@ stability, and switch factors.
 - [ ] **Step 6: Run GREEN verification**
 
 ```powershell
-xmake run vision_analyzer_tests
+xmake run -P . vision_analyzer_tests
 ```
 
 Expected: all new fire/movement cases and the existing tracking/controller tests
@@ -601,7 +601,7 @@ Assert every parsed value.
 - [ ] **Step 2: Run tests to verify RED**
 
 ```powershell
-xmake build vision_analyzer_tests
+xmake -P . vision_analyzer_tests
 ```
 
 Expected: missing helper and option fields cause compilation failure.
@@ -691,7 +691,7 @@ inference session.
 - [ ] **Step 8: Run GREEN verification**
 
 ```powershell
-xmake run vision_analyzer_tests
+xmake run -P . vision_analyzer_tests
 ```
 
 Expected: probe adjustment, config parsing, all previous scalar calibration,
@@ -738,7 +738,7 @@ Register the test in `main()`.
 - [ ] **Step 2: Run the C API build to verify RED**
 
 ```powershell
-xmake build vision_runtime_c_api_tests
+xmake -P . vision_runtime_c_api_tests
 ```
 
 Expected: missing struct, constant, and functions fail compilation.
@@ -778,8 +778,8 @@ updates options, and forwards to an open session. Update legacy
 - [ ] **Step 6: Run C++ and C API tests**
 
 ```powershell
-xmake run vision_analyzer_tests
-xmake run vision_runtime_c_api_tests
+xmake run -P . vision_analyzer_tests
+xmake run -P . vision_runtime_c_api_tests
 ```
 
 Expected: both suites pass, including the fixed 84-byte ABI assertion.
@@ -1119,9 +1119,9 @@ git commit -m "build: update adaptive vision runtime submodule"
 From the C++ worktree:
 
 ```powershell
-xmake build vision_analyzer vision_runtime vision_analyzer_tests vision_runtime_c_api_tests
-xmake run vision_analyzer_tests
-xmake run vision_runtime_c_api_tests
+xmake -P . vision_analyzer vision_runtime vision_analyzer_tests vision_runtime_c_api_tests
+xmake run -P . vision_analyzer_tests
+xmake run -P . vision_runtime_c_api_tests
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File packaging\sm61\tests\run-tests.ps1
 ```
 
