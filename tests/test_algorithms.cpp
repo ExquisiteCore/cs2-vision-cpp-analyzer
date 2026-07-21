@@ -12,6 +12,7 @@
 #include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/dxgi_roi.hpp"
+#include "vision_analyzer/hid_calibration_profile.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/model_input.hpp"
 #include "vision_analyzer/model_schema.hpp"
@@ -802,6 +803,30 @@ void test_runtime_session_starts_closed() {
     require(session.input_name().empty(), "closed runtime session should not report an input");
 }
 
+void test_calibrated_hid_curve_interpolates_signed_gain() {
+    HidCalibrationAxisCurve curve{
+        {8.0F, 32.0F, 96.0F},
+        {2.0F, 3.0F, 4.0F},
+    };
+    require(calibrated_hid_step(20.0F, curve, 120, 1.0F) == 50,
+            "20 px should interpolate to gain 2.5");
+    require(calibrated_hid_step(-20.0F, curve, 120, 1.0F) == -50,
+            "signed errors should preserve direction");
+}
+
+void test_calibrated_hid_curve_supports_inverted_axis_deadzone_and_clamp() {
+    HidCalibrationAxisCurve inverted{
+        {8.0F, 32.0F, 96.0F},
+        {-2.0F, -3.0F, -4.0F},
+    };
+    require(calibrated_hid_step(20.0F, inverted, 120, 1.0F) == -50,
+            "negative gain should support an inverted axis");
+    require(calibrated_hid_step(0.5F, inverted, 120, 1.0F) == 0,
+            "deadzone should suppress noise");
+    require(calibrated_hid_step(200.0F, inverted, 120, 1.0F) == -120,
+            "large movement should clamp to max_step");
+}
+
 void test_runtime_status_includes_parseable_timing_metrics() {
     RuntimeStepResult step;
     step.frame_available = true;
@@ -859,6 +884,8 @@ int main() {
         test_aim_controller_deadzone_suppresses_tiny_steps();
         test_hid_calibration_fit_generates_tuning_values();
         test_runtime_config_file_overrides_tuning_and_io();
+        test_calibrated_hid_curve_interpolates_signed_gain();
+        test_calibrated_hid_curve_supports_inverted_axis_deadzone_and_clamp();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
         test_hid_action_sender_requires_arming_and_stops_when_disarmed();

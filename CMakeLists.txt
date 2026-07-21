@@ -31,6 +31,7 @@ set(VISION_ANALYZER_CORE_SOURCES
     src/detector.cpp
     src/dxgi_roi.cpp
     src/frame_source.cpp
+    src/hid_calibration_profile.cpp
     src/hid_output.cpp
     src/model_input.cpp
     src/model_schema.cpp
