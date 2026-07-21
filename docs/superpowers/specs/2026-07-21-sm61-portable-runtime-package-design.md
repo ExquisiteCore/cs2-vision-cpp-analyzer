@@ -72,6 +72,12 @@ cs2-vision-runtime-sm61/
 ├── model/
 │   ├── best.onnx
 │   └── best.onnx.schema.json
+├── licenses/
+│   ├── onnxruntime/
+│   ├── cuda/
+│   ├── cudnn/
+│   ├── tensorrt/
+│   └── msvc/
 ├── config/
 │   └── runtime-sm61.cfg
 ├── runtime/
@@ -120,12 +126,14 @@ performs these operations in order:
    is unavailable; it must not create a package labelled complete.
 6. Add the Microsoft x64 runtime required by the binaries using Microsoft's
    supported redistributable source or private deployment files.
-7. Write a deterministic manifest containing profile name, component version,
+7. Preserve the license and notice files shipped with every redistributed
+   component under `licenses/`.
+8. Write a deterministic manifest containing profile name, component version,
    original source URL or archive name, packaged filenames, file sizes, and
    SHA256 values.
-8. Reject CUDA 12, cuDNN 9, TensorRT 10/11, or ORT versions other than 1.17.3 in
+9. Reject CUDA 12, cuDNN 9, TensorRT 10/11, or ORT versions other than 1.17.3 in
    the staging tree.
-9. Run package-level static checks and safe smoke tests, then create the ZIP.
+10. Run package-level static checks and safe smoke tests, then create the ZIP.
 
 Downloads are cached outside the final staging directory so repeated builds do
 not redownload multi-gigabyte archives. Partial downloads use a temporary name
