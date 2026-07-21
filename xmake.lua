@@ -28,89 +28,98 @@ end
 local hid_sdk_include = path.join(hid_sdk_root, "include")
 local has_hid_sdk = hid_sdk_root ~= "" and os.isdir(hid_sdk_include)
 
-target("vision_analyzer")
-    set_kind("binary")
-    add_includedirs("include")
+local runtime_core_files = {
+    "src/aim_controller.cpp",
+    "src/calibration.cpp",
+    "src/calibration_fit.cpp",
+    "src/detector.cpp",
+    "src/frame_source.cpp",
+    "src/hid_output.cpp",
+    "src/model_schema.cpp",
+    "src/postprocess.cpp",
+    "src/runtime_config.cpp",
+    "src/runtime_options.cpp",
+    "src/runtime_session.cpp",
+    "src/tracking.cpp",
+    "src/types.cpp",
+}
+
+local function add_runtime_runenvs()
     if has_ort then
-        add_includedirs(ort_include)
-        add_defines("VISION_ANALYZER_WITH_ORT")
-        add_linkdirs(ort_lib)
-        add_links("onnxruntime")
         add_runenvs("PATH", ort_lib)
-        after_build(function (target)
-            os.cp(path.join(ort_lib, "*.dll"), target:targetdir())
-        end)
+    end
+    if os.isdir(torch_lib) then
+        add_runenvs("PATH", torch_lib)
+    end
+    if os.isdir(tensorrt_libs) then
+        add_runenvs("PATH", tensorrt_libs)
+    end
+end
+
+local function copy_ort_runtime(target)
+    if has_ort then
+        os.cp(path.join(ort_lib, "*.dll"), target:targetdir())
+    end
+end
+
+target("vision_analyzer_core")
+    set_kind("static")
+    add_includedirs("include", {public = true})
+    add_packages("opencv", {public = true})
+    for _, source_file in ipairs(runtime_core_files) do
+        add_files(source_file)
+    end
+    if has_ort then
+        add_includedirs(ort_include, {public = true})
+        add_defines("VISION_ANALYZER_WITH_ORT", {public = true})
+        add_linkdirs(ort_lib, {public = true})
+        add_links("onnxruntime", {public = true})
     end
     if has_hid_sdk then
-        add_includedirs(hid_sdk_include)
-        add_defines("VISION_ANALYZER_WITH_RP2350_HID")
+        add_includedirs(hid_sdk_include, {public = true})
+        add_defines("VISION_ANALYZER_WITH_RP2350_HID", {public = true})
     end
-    add_files("src/*.cpp")
-    remove_files("src/ui_app.cpp")
-    add_packages("opencv")
-    add_runenvs("PATH", torch_lib)
-    add_runenvs("PATH", tensorrt_libs)
     if is_plat("windows") then
         add_cxflags("/utf-8")
-        add_syslinks("d3d11", "dxgi")
+        add_syslinks("d3d11", "dxgi", {public = true})
     end
+
+target("vision_analyzer")
+    set_kind("binary")
+    add_files("src/main.cpp")
+    add_deps("vision_analyzer_core")
+    add_runtime_runenvs()
+    if is_plat("windows") then
+        add_cxflags("/utf-8")
+    end
+    after_build(copy_ort_runtime)
 
 target("vision_runtime")
     set_kind("shared")
-    add_includedirs("include")
-    add_defines("VISION_ANALYZER_NO_CLI_MAIN", "VISION_RUNTIME_BUILD_DLL")
-    if has_ort then
-        add_includedirs(ort_include)
-        add_defines("VISION_ANALYZER_WITH_ORT")
-        add_linkdirs(ort_lib)
-        add_links("onnxruntime")
-        add_runenvs("PATH", ort_lib)
-        after_build(function (target)
-            os.cp(path.join(ort_lib, "*.dll"), target:targetdir())
-        end)
-    end
-    if has_hid_sdk then
-        add_includedirs(hid_sdk_include)
-        add_defines("VISION_ANALYZER_WITH_RP2350_HID")
-    end
-    add_files("src/*.cpp")
-    remove_files("src/ui_app.cpp")
-    add_packages("opencv")
-    add_runenvs("PATH", torch_lib)
-    add_runenvs("PATH", tensorrt_libs)
+    add_files("src/vision_runtime_c_api.cpp")
+    add_deps("vision_analyzer_core")
+    add_defines("VISION_RUNTIME_BUILD_DLL")
+    add_includedirs("include", {public = true})
+    add_runtime_runenvs()
     if is_plat("windows") then
         add_cxflags("/utf-8")
-        add_syslinks("d3d11", "dxgi")
     end
+    after_build(copy_ort_runtime)
 
 target("vision_analyzer_tests")
     set_kind("binary")
-    add_includedirs("include")
     add_files("tests/test_algorithms.cpp")
-    add_files(
-        "src/types.cpp",
-        "src/postprocess.cpp",
-        "src/tracking.cpp",
-        "src/hid_output.cpp",
-        "src/aim_controller.cpp",
-        "src/runtime_config.cpp",
-        "src/model_schema.cpp",
-        "src/calibration_fit.cpp",
-        "src/runtime_session.cpp",
-        "src/detector.cpp",
-        "src/frame_source.cpp"
-    )
-    add_packages("opencv")
+    add_deps("vision_analyzer_core")
+    add_runtime_runenvs()
     if is_plat("windows") then
         add_cxflags("/utf-8")
-        add_syslinks("d3d11", "dxgi")
     end
 
 target("vision_runtime_c_api_tests")
     set_kind("binary")
-    add_includedirs("include")
     add_files("tests/test_c_api.cpp")
     add_deps("vision_runtime")
+    add_runtime_runenvs()
     if is_plat("windows") then
         add_cxflags("/utf-8")
     end
