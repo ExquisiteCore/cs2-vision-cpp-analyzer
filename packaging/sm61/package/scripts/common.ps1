@@ -143,8 +143,16 @@ function Invoke-PackageCommand {
         [string]$LogPath,
         [switch]$Quiet
     )
-    $captured = @(& $FilePath @Arguments 2>&1)
-    $exitCode = $LASTEXITCODE
+    $oldErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 promotes native stderr to a terminating
+        # RemoteException when the caller uses Stop, even if the process exits 0.
+        $ErrorActionPreference = 'Continue'
+        $captured = @(& $FilePath @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
     $lines = @($captured | ForEach-Object { $_.ToString() })
     if (-not [string]::IsNullOrWhiteSpace($LogPath)) {
         Add-Content -LiteralPath $LogPath -Value ($lines -join [Environment]::NewLine) -Encoding UTF8

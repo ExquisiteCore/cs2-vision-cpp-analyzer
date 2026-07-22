@@ -134,6 +134,20 @@ try {
         }
     }
 
+    Invoke-Test 'package command preserves native stderr warnings under Windows PowerShell 5.1' {
+        $common = Join-Path (Join-Path $PSScriptRoot '..') 'package\scripts\common.ps1'
+        . $common
+
+        $result = Invoke-PackageCommand `
+            -FilePath $env:ComSpec `
+            -Arguments @('/d', '/c', 'echo native-warning 1>&2 & echo processed_frames=3 & exit /b 0') `
+            -Quiet
+
+        Assert-Equal 0 $result.ExitCode 'a warning on native stderr must not abort a successful command'
+        Assert-True ($result.Text -match 'native-warning') 'native stderr must remain available in captured output'
+        Assert-True ($result.Text -match 'processed_frames=3') 'native stdout after the warning must remain available'
+    }
+
     Invoke-Test 'manifest reports missing immutable files' {
         $root = Join-Path $testRoot 'manifest-missing'
         New-Item -ItemType Directory -Path (Join-Path $root 'app') -Force | Out-Null
