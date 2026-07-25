@@ -391,6 +391,25 @@ try {
         }
     }
 
+    Invoke-Test 'build definitions pin RP2350 protocol v2 and thread support' {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+        $cmake = Get-Content -LiteralPath (Join-Path $repoRoot 'CMakeLists.txt') -Raw
+        $hidOutput = Get-Content -LiteralPath (Join-Path $repoRoot 'src\hid_output.cpp') -Raw
+
+        Assert-True `
+            ($cmake -match 'cmake_minimum_required\(VERSION 3\.20\)') `
+            'CMake must match the SDK minimum version'
+        Assert-True `
+            ($cmake.Contains('find_package(Threads REQUIRED)')) `
+            'CMake must resolve SDK thread support'
+        Assert-True `
+            ($cmake.Contains('Threads::Threads')) `
+            'HID-enabled core must link the thread target'
+        Assert-True `
+            ($hidOutput.Contains('PROTOCOL_VERSION == kRp2350ProtocolV2')) `
+            'the compiled runtime must reject an old SDK'
+    }
+
     Invoke-Test 'verified dependency cache accepts matching hash and quarantines corruption' {
         $cache = Join-Path $testRoot 'archive-cache'
         New-Item -ItemType Directory -Path $cache -Force | Out-Null

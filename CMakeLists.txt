@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.20)
 project(cs2_vision_runtime LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -61,8 +61,10 @@ if(EXISTS "${ONNXRUNTIME_ROOT}/include" AND EXISTS "${ONNXRUNTIME_ROOT}/lib")
 endif()
 
 if(EXISTS "${HID_SDK_ROOT}/include")
+    find_package(Threads REQUIRED)
     target_compile_definitions(vision_analyzer_core PUBLIC VISION_ANALYZER_WITH_RP2350_HID)
     target_include_directories(vision_analyzer_core PUBLIC "${HID_SDK_ROOT}/include")
+    target_link_libraries(vision_analyzer_core PUBLIC Threads::Threads)
 endif()
 
 if(WIN32)
