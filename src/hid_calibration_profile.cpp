@@ -30,10 +30,16 @@ namespace {
 }  // namespace
 
 bool valid_hid_calibration_curve(const HidCalibrationAxisCurve& curve) {
+    bool expected_sign = false;
     for (std::size_t index = 0; index < kHidCalibrationLevels; ++index) {
         if (!std::isfinite(curve.shift_px[index]) || curve.shift_px[index] <= 0.0F ||
             !std::isfinite(curve.counts_per_pixel[index]) ||
             curve.counts_per_pixel[index] == 0.0F) {
+            return false;
+        }
+        if (index == 0) {
+            expected_sign = std::signbit(curve.counts_per_pixel[index]);
+        } else if (std::signbit(curve.counts_per_pixel[index]) != expected_sign) {
             return false;
         }
         if (index > 0 && curve.shift_px[index] <= curve.shift_px[index - 1]) {
@@ -41,6 +47,25 @@ bool valid_hid_calibration_curve(const HidCalibrationAxisCurve& curve) {
         }
     }
     return true;
+}
+
+bool valid_hid_calibration_profile(const HidCalibrationProfile& profile) {
+    return profile.valid &&
+           profile.frame_width > 0 &&
+           profile.frame_height > 0 &&
+           valid_hid_calibration_curve(profile.x) &&
+           valid_hid_calibration_curve(profile.y) &&
+           std::isfinite(profile.deadzone_px) &&
+           profile.deadzone_px >= 0.0F &&
+           profile.deadzone_px <= 8.0F &&
+           profile.max_step >= 1 &&
+           profile.max_step <= 120 &&
+           std::isfinite(profile.noise_px) &&
+           profile.noise_px >= 0.0F &&
+           std::isfinite(profile.quality) &&
+           profile.quality >= kHidCalibrationMinimumQuality &&
+           profile.quality <= 1.0F &&
+           profile.accepted_samples >= kHidCalibrationMinimumAcceptedSamples;
 }
 
 std::int16_t calibrated_hid_step(

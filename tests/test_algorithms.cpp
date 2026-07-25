@@ -15,6 +15,7 @@
 #include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/dxgi_roi.hpp"
 #include "vision_analyzer/hid_calibration_profile.hpp"
+#include "vision_analyzer/hid_calibration_store.hpp"
 #include "vision_analyzer/hid_output.hpp"
 #include "vision_analyzer/model_input.hpp"
 #include "vision_analyzer/model_schema.hpp"
@@ -1089,6 +1090,171 @@ HidCalibrationProfile make_valid_hid_profile() {
     return profile;
 }
 
+HidCalibrationProfile make_persistable_hid_profile() {
+    HidCalibrationProfile profile;
+    profile.valid = true;
+    profile.frame_width = 1920;
+    profile.frame_height = 1080;
+    profile.x.shift_px = {8.05F, 23.53F, 46.58F};
+    profile.x.counts_per_pixel = {1.37F, 1.40F, 1.42F};
+    profile.y.shift_px = {7.93F, 24.20F, 47.15F};
+    profile.y.counts_per_pixel = {1.39F, 1.41F, 1.42F};
+    profile.deadzone_px = 1.0F;
+    profile.max_step = 120;
+    profile.noise_px = 0.009F;
+    profile.quality = 0.678F;
+    profile.accepted_samples = 24;
+    return profile;
+}
+
+std::filesystem::path calibration_store_test_directory() {
+    return std::filesystem::temp_directory_path() /
+           "vision-analyzer-hid-calibration-store-tests";
+}
+
+void write_calibration_json(
+    const std::filesystem::path& path,
+    int schema_version,
+    int max_step
+) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << "{\n"
+           << "  \"schema_version\": " << schema_version << ",\n"
+           << "  \"frame_width\": 1920,\n"
+           << "  \"frame_height\": 1080,\n"
+           << "  \"x_shift_px\": [8.05, 23.53, 46.58],\n"
+           << "  \"x_counts_per_pixel\": [1.37, 1.40, 1.42],\n"
+           << "  \"y_shift_px\": [7.93, 24.20, 47.15],\n"
+           << "  \"y_counts_per_pixel\": [1.39, 1.41, 1.42],\n"
+           << "  \"deadzone_px\": 1.0,\n"
+           << "  \"max_step\": " << max_step << ",\n"
+           << "  \"noise_px\": 0.009,\n"
+           << "  \"quality\": 0.678,\n"
+           << "  \"accepted_samples\": 24\n"
+           << "}\n";
+}
+
+void test_hid_calibration_profile_validation_is_strict() {
+    HidCalibrationProfile profile = make_persistable_hid_profile();
+    require(valid_hid_calibration_profile(profile),
+            "complete fitted profile should validate");
+
+    profile.x.shift_px[1] = profile.x.shift_px[0];
+    require(!valid_hid_calibration_profile(profile),
+            "non-increasing shift knots should fail validation");
+    profile = make_persistable_hid_profile();
+    profile.y.counts_per_pixel[1] = -profile.y.counts_per_pixel[1];
+    require(!valid_hid_calibration_profile(profile),
+            "mixed gain signs should fail validation");
+    profile = make_persistable_hid_profile();
+    profile.max_step = 121;
+    require(!valid_hid_calibration_profile(profile),
+            "persisted runtime step above 120 should fail validation");
+    profile = make_persistable_hid_profile();
+    profile.quality = 0.54F;
+    require(!valid_hid_calibration_profile(profile),
+            "profile below fitter quality threshold should fail validation");
+    profile = make_persistable_hid_profile();
+    profile.accepted_samples = 11;
+    require(!valid_hid_calibration_profile(profile),
+            "profile with fewer than twelve movement samples should fail validation");
+}
+
+void test_hid_calibration_store_round_trips_every_field() {
+    const auto directory = calibration_store_test_directory();
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "profile.json";
+    const HidCalibrationProfile expected = make_persistable_hid_profile();
+
+    save_hid_calibration_profile_atomic(path, expected);
+    const HidCalibrationProfile actual = load_hid_calibration_profile(path);
+
+    require(actual.valid, "loaded profile should remain valid");
+    require(actual.frame_width == expected.frame_width &&
+            actual.frame_height == expected.frame_height,
+            "loaded profile should retain frame dimensions");
+    require(actual.x.shift_px == expected.x.shift_px &&
+            actual.x.counts_per_pixel == expected.x.counts_per_pixel &&
+            actual.y.shift_px == expected.y.shift_px &&
+            actual.y.counts_per_pixel == expected.y.counts_per_pixel,
+            "loaded profile should retain every curve value");
+    require_near(actual.deadzone_px, expected.deadzone_px, 0.0001F,
+                 "loaded profile should retain deadzone");
+    require_near(actual.noise_px, expected.noise_px, 0.0001F,
+                 "loaded profile should retain noise");
+    require_near(actual.quality, expected.quality, 0.0001F,
+                 "loaded profile should retain quality");
+    require(actual.max_step == expected.max_step &&
+            actual.accepted_samples == expected.accepted_samples,
+            "loaded profile should retain safety and sample fields");
+    std::filesystem::remove_all(directory);
+}
+
+void test_hid_calibration_store_rejects_corrupt_and_incompatible_json() {
+    const auto directory = calibration_store_test_directory();
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+
+    const auto corrupt = directory / "corrupt.json";
+    {
+        std::ofstream output(corrupt, std::ios::binary | std::ios::trunc);
+        output << "{broken";
+    }
+    bool corrupt_rejected = false;
+    try {
+        (void)load_hid_calibration_profile(corrupt);
+    } catch (const std::exception&) {
+        corrupt_rejected = true;
+    }
+    require(corrupt_rejected, "truncated JSON should be rejected");
+
+    const auto incompatible = directory / "incompatible.json";
+    write_calibration_json(incompatible, 2, 120);
+    bool schema_rejected = false;
+    try {
+        (void)load_hid_calibration_profile(incompatible);
+    } catch (const std::exception& error) {
+        schema_rejected = std::string(error.what()).find("schema_version") !=
+                          std::string::npos;
+    }
+    require(schema_rejected, "incompatible schema should name schema_version");
+
+    const auto unsafe = directory / "unsafe.json";
+    write_calibration_json(unsafe, 1, 121);
+    bool unsafe_rejected = false;
+    try {
+        (void)load_hid_calibration_profile(unsafe);
+    } catch (const std::exception&) {
+        unsafe_rejected = true;
+    }
+    require(unsafe_rejected, "profile with runtime max step above 120 should be rejected");
+    std::filesystem::remove_all(directory);
+}
+
+void test_hid_calibration_atomic_save_preserves_old_destination_on_failure() {
+    const auto directory = calibration_store_test_directory();
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    const auto path = directory / "profile.json";
+    const HidCalibrationProfile old_profile = make_persistable_hid_profile();
+    save_hid_calibration_profile_atomic(path, old_profile);
+
+    HidCalibrationProfile invalid_candidate = old_profile;
+    invalid_candidate.max_step = 121;
+    bool rejected = false;
+    try {
+        save_hid_calibration_profile_atomic(path, invalid_candidate);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    require(rejected, "invalid save candidate should be rejected");
+    const HidCalibrationProfile loaded = load_hid_calibration_profile(path);
+    require(loaded.max_step == 120 && loaded.quality == old_profile.quality,
+            "failed save should preserve the complete old destination");
+    std::filesystem::remove_all(directory);
+}
+
 FrameReport make_target_report(Detection detection, cv::Point2f offset) {
     TargetFrame target{};
     target.detection = std::move(detection);
@@ -1378,6 +1544,10 @@ int main() {
         test_calibrated_hid_curve_supports_inverted_axis_deadzone_and_clamp();
         test_aim_controller_holds_when_no_target();
         test_aim_controller_respects_click_cooldown();
+        test_hid_calibration_profile_validation_is_strict();
+        test_hid_calibration_store_round_trips_every_field();
+        test_hid_calibration_store_rejects_corrupt_and_incompatible_json();
+        test_hid_calibration_atomic_save_preserves_old_destination_on_failure();
         test_aim_controller_uses_calibrated_axes();
         test_head_fires_on_first_frame_inside_box();
         test_body_fires_only_in_torso_when_enabled();

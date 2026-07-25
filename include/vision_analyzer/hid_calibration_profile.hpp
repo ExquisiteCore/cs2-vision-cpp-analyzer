@@ -7,6 +7,9 @@
 namespace vision_analyzer {
 
 constexpr std::size_t kHidCalibrationLevels = 3;
+constexpr int kHidCalibrationSchemaVersion = 1;
+constexpr float kHidCalibrationMinimumQuality = 0.55F;
+constexpr int kHidCalibrationMinimumAcceptedSamples = 12;
 
 struct HidCalibrationAxisCurve {
     std::array<float, kHidCalibrationLevels> shift_px{};
@@ -27,6 +30,7 @@ struct HidCalibrationProfile {
 };
 
 [[nodiscard]] bool valid_hid_calibration_curve(const HidCalibrationAxisCurve& curve);
+[[nodiscard]] bool valid_hid_calibration_profile(const HidCalibrationProfile& profile);
 [[nodiscard]] std::int16_t calibrated_hid_step(
     float error_px,
     const HidCalibrationAxisCurve& curve,

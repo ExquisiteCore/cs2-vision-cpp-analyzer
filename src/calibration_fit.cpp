@@ -229,7 +229,7 @@ HidCalibrationProfile fit_adaptive_hid_calibration(
         1.0
     );
     profile.quality = static_cast<float>(mean_response * mean_consistency * signal_to_noise);
-    profile.valid = profile.quality >= 0.55F &&
+    profile.valid = profile.quality >= kHidCalibrationMinimumQuality &&
                     valid_hid_calibration_curve(profile.x) &&
                     valid_hid_calibration_curve(profile.y);
     return profile;
