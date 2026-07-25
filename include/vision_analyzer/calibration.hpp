@@ -35,6 +35,16 @@ struct VisualShiftEstimate {
     bool coherent = true;
 };
 
+struct CenterFlowEstimate {
+    cv::Point2d shift;
+    int detected_features = 0;
+    int tracked_features = 0;
+    int inlier_features = 0;
+    int occupied_cells = 0;
+    double spread_px = 0.0;
+    bool reliable = false;
+};
+
 struct CalibrationRoundTripMeasurement {
     VisualShiftEstimate outward;
     VisualShiftEstimate inverse;
@@ -110,6 +120,10 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     const cv::Mat& after
 );
 [[nodiscard]] VisualShiftEstimate estimate_robust_visual_shift(
+    const cv::Mat& before,
+    const cv::Mat& after
+);
+[[nodiscard]] CenterFlowEstimate estimate_center_flow(
     const cv::Mat& before,
     const cv::Mat& after
 );

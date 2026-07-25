@@ -1390,6 +1390,26 @@ void test_axis_calibration_shift_recovers_from_static_hud_zero_cluster() {
             "axis calibration must recover visible camera movement from its reference");
 }
 
+void test_center_flow_measures_scene_around_fixed_crosshair() {
+    const cv::Size viewport_size{1920, 1080};
+    const cv::Mat panorama = make_textured_calibration_scene({2240, 1240});
+    cv::Mat before = camera_crop(panorama, viewport_size, 80, 80);
+    cv::Mat after = yaw_camera_view(before, 12.0);
+    paint_static_game_hud(before);
+    paint_static_game_hud(after);
+
+    const CenterFlowEstimate estimate = estimate_center_flow(before, after);
+
+    require(estimate.reliable,
+            "center scene motion should be measurable around a fixed crosshair");
+    require_near(static_cast<float>(estimate.shift.x), -12.0F, 2.5F,
+                 "center flow should recover camera X movement");
+    require(std::abs(estimate.shift.y) < 1.5,
+            "fixed crosshair must not create cross-axis flow");
+    require(estimate.inlier_features >= 12 && estimate.occupied_cells >= 3,
+            "camera movement needs distributed center-scene support");
+}
+
 void test_robust_visual_shift_requires_multiple_textured_regions() {
     cv::Mat before(540, 960, CV_8UC3, cv::Scalar(32, 32, 32));
     cv::Mat after = before.clone();
@@ -2016,6 +2036,7 @@ int main() {
         test_recovered_level_measurements_fit_three_increasing_knots();
         test_robust_visual_shift_ignores_static_overlay_and_blank_tile();
         test_axis_calibration_shift_recovers_from_static_hud_zero_cluster();
+        test_center_flow_measures_scene_around_fixed_crosshair();
         test_robust_visual_shift_requires_multiple_textured_regions();
         test_robust_visual_shift_rejects_one_isolated_textured_region();
         test_visual_shift_estimate_preserves_phase_response();

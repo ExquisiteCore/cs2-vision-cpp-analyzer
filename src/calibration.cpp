@@ -16,6 +16,7 @@
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/video/tracking.hpp>
 
 #include "vision_analyzer/frame_source.hpp"
 #include "vision_analyzer/hid_output.hpp"
@@ -89,6 +90,24 @@ namespace {
     cv::Mat as_float;
     gray.convertTo(as_float, CV_32F);
     return as_float;
+}
+
+[[nodiscard]] cv::Mat full_gray_u8(const cv::Mat& input) {
+    if (input.empty()) {
+        throw std::runtime_error("empty frame cannot be used for calibration");
+    }
+    cv::Mat gray;
+    if (input.channels() == 1) {
+        gray = input;
+    } else {
+        cv::cvtColor(input, gray, cv::COLOR_BGR2GRAY);
+    }
+    if (gray.depth() == CV_8U) {
+        return gray;
+    }
+    cv::Mat as_u8;
+    gray.convertTo(as_u8, CV_8U);
+    return as_u8;
 }
 
 [[nodiscard]] std::vector<int> tile_origins(int extent, int tile_extent) {
@@ -298,6 +317,199 @@ VisualShiftEstimate estimate_robust_visual_shift(
         }
     }
     return aggregate_tile_candidates(candidates);
+}
+
+CenterFlowEstimate estimate_center_flow(
+    const cv::Mat& before,
+    const cv::Mat& after
+) {
+    const cv::Mat before_gray = full_gray_u8(before);
+    const cv::Mat after_gray = full_gray_u8(after);
+    if (before_gray.size() != after_gray.size()) {
+        throw std::runtime_error("calibration frames have different sizes");
+    }
+
+    const int width = std::min(640, before_gray.cols);
+    const int height = std::min(480, before_gray.rows);
+    if (width < 128 || height < 128) {
+        return {};
+    }
+    const cv::Rect roi_rect(
+        (before_gray.cols - width) / 2,
+        (before_gray.rows - height) / 2,
+        width,
+        height
+    );
+    const cv::Mat before_roi = before_gray(roi_rect);
+    const cv::Mat after_roi = after_gray(roi_rect);
+    cv::Mat feature_mask(height, width, CV_8U, cv::Scalar(255));
+    const int crosshair_width = std::min(96, width);
+    const int crosshair_height = std::min(96, height);
+    cv::rectangle(
+        feature_mask,
+        {
+            (width - crosshair_width) / 2,
+            (height - crosshair_height) / 2,
+            crosshair_width,
+            crosshair_height,
+        },
+        cv::Scalar(0),
+        cv::FILLED
+    );
+
+    std::vector<cv::Point2f> before_points;
+    cv::goodFeaturesToTrack(
+        before_roi,
+        before_points,
+        240,
+        0.01,
+        8.0,
+        feature_mask,
+        3,
+        false,
+        0.04
+    );
+
+    CenterFlowEstimate result;
+    result.detected_features = static_cast<int>(before_points.size());
+    if (before_points.size() < 12) {
+        return result;
+    }
+
+    const cv::TermCriteria criteria(
+        cv::TermCriteria::COUNT | cv::TermCriteria::EPS,
+        30,
+        0.01
+    );
+    std::vector<cv::Point2f> after_points;
+    std::vector<unsigned char> forward_status;
+    std::vector<float> forward_error;
+    cv::calcOpticalFlowPyrLK(
+        before_roi,
+        after_roi,
+        before_points,
+        after_points,
+        forward_status,
+        forward_error,
+        {31, 31},
+        3,
+        criteria
+    );
+
+    std::vector<cv::Point2f> returned_points;
+    std::vector<unsigned char> backward_status;
+    std::vector<float> backward_error;
+    cv::calcOpticalFlowPyrLK(
+        after_roi,
+        before_roi,
+        after_points,
+        returned_points,
+        backward_status,
+        backward_error,
+        {31, 31},
+        3,
+        criteria
+    );
+
+    struct FlowTrack {
+        cv::Point2f origin;
+        cv::Point2d flow;
+    };
+    std::vector<FlowTrack> tracks;
+    tracks.reserve(before_points.size());
+    for (std::size_t index = 0; index < before_points.size(); ++index) {
+        if (index >= forward_status.size() || index >= backward_status.size() ||
+            forward_status[index] == 0 || backward_status[index] == 0) {
+            continue;
+        }
+        const cv::Point2f& moved = after_points[index];
+        if (moved.x < 0.0F || moved.y < 0.0F ||
+            moved.x >= static_cast<float>(width) ||
+            moved.y >= static_cast<float>(height) ||
+            cv::norm(returned_points[index] - before_points[index]) > 1.5) {
+            continue;
+        }
+        tracks.push_back({
+            before_points[index],
+            {
+                static_cast<double>(moved.x - before_points[index].x),
+                static_cast<double>(moved.y - before_points[index].y),
+            },
+        });
+    }
+    result.tracked_features = static_cast<int>(tracks.size());
+    if (tracks.size() < 12) {
+        return result;
+    }
+
+    std::vector<double> flows_x;
+    std::vector<double> flows_y;
+    flows_x.reserve(tracks.size());
+    flows_y.reserve(tracks.size());
+    for (const FlowTrack& track : tracks) {
+        flows_x.push_back(track.flow.x);
+        flows_y.push_back(track.flow.y);
+    }
+    const cv::Point2d initial_median{
+        median_or_zero(flows_x),
+        median_or_zero(flows_y),
+    };
+    std::vector<double> residuals;
+    residuals.reserve(tracks.size());
+    for (const FlowTrack& track : tracks) {
+        residuals.push_back(cv::norm(track.flow - initial_median));
+    }
+    const double residual_limit = std::max(1.5, 3.0 * median_or_zero(residuals));
+
+    std::vector<const FlowTrack*> inliers;
+    std::vector<double> inlier_x;
+    std::vector<double> inlier_y;
+    for (std::size_t index = 0; index < tracks.size(); ++index) {
+        if (residuals[index] <= residual_limit) {
+            inliers.push_back(&tracks[index]);
+            inlier_x.push_back(tracks[index].flow.x);
+            inlier_y.push_back(tracks[index].flow.y);
+        }
+    }
+    result.inlier_features = static_cast<int>(inliers.size());
+    if (inliers.size() < 12) {
+        return result;
+    }
+
+    result.shift = {
+        median_or_zero(std::move(inlier_x)),
+        median_or_zero(std::move(inlier_y)),
+    };
+    std::vector<double> inlier_residuals;
+    inlier_residuals.reserve(inliers.size());
+    std::array<bool, 12> occupied{};
+    for (const FlowTrack* track : inliers) {
+        inlier_residuals.push_back(cv::norm(track->flow - result.shift));
+        const int cell_x = std::clamp(
+            static_cast<int>(track->origin.x * 4.0F / static_cast<float>(width)),
+            0,
+            3
+        );
+        const int cell_y = std::clamp(
+            static_cast<int>(track->origin.y * 3.0F / static_cast<float>(height)),
+            0,
+            2
+        );
+        occupied[static_cast<std::size_t>(cell_y * 4 + cell_x)] = true;
+    }
+    result.spread_px = median_or_zero(std::move(inlier_residuals));
+    result.occupied_cells = static_cast<int>(std::count(
+        occupied.begin(),
+        occupied.end(),
+        true
+    ));
+    result.reliable =
+        result.inlier_features >= 12 &&
+        result.occupied_cells >= 3 &&
+        std::isfinite(result.shift.x) &&
+        std::isfinite(result.shift.y) &&
+        std::isfinite(result.spread_px);
+    return result;
 }
 
 VisualShiftEstimate estimate_calibration_axis_shift(
