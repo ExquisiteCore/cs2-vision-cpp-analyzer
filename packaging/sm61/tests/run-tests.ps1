@@ -74,6 +74,70 @@ function New-EmptyFile {
     [IO.File]::WriteAllBytes($LiteralPath, [byte[]]@())
 }
 
+function New-PortablePackageFixture {
+    param(
+        [Parameter(Mandatory)][string]$LiteralPath,
+        [switch]$SkipManifest
+    )
+
+    foreach ($relative in @(
+        'app',
+        'model',
+        'runtime\cuda-11.8',
+        'runtime\cudnn-8.9',
+        'runtime\tensorrt-8.6.1.6',
+        'runtime\msvc-x64',
+        'config',
+        'licenses\runtime',
+        'python\cs2_vision_runtime',
+        'examples',
+        'logs',
+        'cache'
+    )) {
+        New-Item -ItemType Directory -Path (Join-Path $LiteralPath $relative) -Force | Out-Null
+    }
+
+    $files = [ordered]@{
+        'app\vision_runtime.dll' = 'runtime-dll'
+        'app\vision_analyzer.exe' = 'diagnostic-exe'
+        'app\onnxruntime.dll' = 'ort-core'
+        'app\onnxruntime_providers_shared.dll' = 'ort-shared'
+        'app\onnxruntime_providers_cuda.dll' = 'ort-cuda'
+        'app\onnxruntime_providers_tensorrt.dll' = 'ort-tensorrt'
+        'model\best.onnx' = 'model'
+        'model\best.onnx.schema.json' = '{"classes":["ct_head","ct_body","t_head","t_body"]}'
+        'runtime\cuda-11.8\cudart64_110.dll' = 'cuda'
+        'runtime\cudnn-8.9\cudnn64_8.dll' = 'cudnn'
+        'runtime\tensorrt-8.6.1.6\nvinfer.dll' = 'tensorrt'
+        'runtime\msvc-x64\VCRUNTIME140.dll' = 'msvc'
+        'config\runtime-sm61.cfg' = 'backend=ort-tensorrt'
+        'licenses\runtime\NOTICE.txt' = 'license'
+        'python\cs2_vision_runtime\runtime.py' = 'must-not-copy'
+        'examples\runtime_live_move.py' = 'must-not-copy'
+        'logs\old.log' = 'must-not-copy'
+        'cache\old.engine' = 'must-not-copy'
+    }
+    foreach ($entry in $files.GetEnumerator()) {
+        [IO.File]::WriteAllText(
+            (Join-Path $LiteralPath ([string]$entry.Key)),
+            [string]$entry.Value
+        )
+    }
+
+    if (-not $SkipManifest) {
+        Write-PackageManifest `
+            -PackageRoot $LiteralPath `
+            -Profile 'sm61-ort1173-trt861-fp32' `
+            -Components @(
+                [pscustomobject]@{ id = 'onnxruntime-gpu'; version = '1.17.3' },
+                [pscustomobject]@{ id = 'cuda-cudart'; version = '11.8' },
+                [pscustomobject]@{ id = 'cudnn'; version = '8.9.7' },
+                [pscustomobject]@{ id = 'tensorrt'; version = '8.6.1.6' },
+                [pscustomobject]@{ id = 'msvc-crt'; version = '14.x-v14-compatible' }
+            )
+    }
+}
+
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('sm61-package-tests-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 
@@ -593,6 +657,104 @@ try {
             Assert-True ($content.Contains($token)) "builder must use $token"
         }
         Assert-True ($content -notmatch '(?im)\bsetx(?:\.exe)?\b') 'builder must not persist environment changes'
+    }
+
+    Invoke-Test 'app-local builder requires an intact verified portable package' {
+        $builder = Join-Path (Join-Path $PSScriptRoot '..') 'build-app-local-package.ps1'
+        Assert-True (Test-Path -LiteralPath $builder -PathType Leaf) 'build-app-local-package.ps1 must exist'
+
+        $withoutManifest = Join-Path $testRoot 'app-local-source-without-manifest'
+        New-PortablePackageFixture -LiteralPath $withoutManifest -SkipManifest
+        Assert-Throws {
+            & $builder `
+                -PortablePackageRoot $withoutManifest `
+                -OutputRoot (Join-Path $testRoot 'app-local-missing-manifest-output')
+        } 'manifest' 'app-local builder must reject a source without its verified manifest'
+
+        $tampered = Join-Path $testRoot 'app-local-tampered-source'
+        New-PortablePackageFixture -LiteralPath $tampered
+        [IO.File]::AppendAllText((Join-Path $tampered 'model\best.onnx'), '-tampered')
+        Assert-Throws {
+            & $builder `
+                -PortablePackageRoot $tampered `
+                -OutputRoot (Join-Path $testRoot 'app-local-tampered-output')
+        } 'validation|manifest|integrity|changed' 'app-local builder must reject changed source files'
+    }
+
+    Invoke-Test 'app-local builder creates the frozen-client layout and manifest' {
+        $builder = Join-Path (Join-Path $PSScriptRoot '..') 'build-app-local-package.ps1'
+        $source = Join-Path $testRoot 'app-local-source'
+        $output = Join-Path $testRoot 'MyClient'
+        New-PortablePackageFixture -LiteralPath $source
+
+        & $builder `
+            -PortablePackageRoot $source `
+            -OutputRoot $output `
+            -PythonSdkVersion '0.2.0'
+
+        $resources = Join-Path $output 'resources\vision-runtime'
+        foreach ($relative in @(
+            'vision_runtime.dll',
+            'resources\vision-runtime\runtime-manifest.json',
+            'resources\vision-runtime\model\best.onnx',
+            'resources\vision-runtime\model\best.onnx.schema.json',
+            'resources\vision-runtime\native\onnxruntime\onnxruntime.dll',
+            'resources\vision-runtime\native\onnxruntime\onnxruntime_providers_tensorrt.dll',
+            'resources\vision-runtime\native\cuda-11.8\cudart64_110.dll',
+            'resources\vision-runtime\native\cudnn-8.9\cudnn64_8.dll',
+            'resources\vision-runtime\native\tensorrt-8.6.1.6\nvinfer.dll',
+            'resources\vision-runtime\native\msvc-x64\VCRUNTIME140.dll',
+            'resources\vision-runtime\config\runtime-sm61.cfg',
+            'resources\vision-runtime\licenses\runtime\NOTICE.txt'
+        )) {
+            Assert-True (Test-Path -LiteralPath (Join-Path $output $relative)) "app-local output is missing $relative"
+        }
+        foreach ($relative in @(
+            'vision_analyzer.exe',
+            'resources\vision-runtime\python',
+            'resources\vision-runtime\examples',
+            'resources\vision-runtime\logs',
+            'resources\vision-runtime\cache'
+        )) {
+            Assert-True (-not (Test-Path -LiteralPath (Join-Path $output $relative))) "app-local output must omit $relative"
+        }
+
+        $manifest = Get-Content -LiteralPath (Join-Path $resources 'runtime-manifest.json') -Raw | ConvertFrom-Json
+        Assert-Equal 1 $manifest.manifest_version 'app-local manifest version'
+        Assert-Equal '0.2.0' $manifest.package_version 'app-local package version'
+        Assert-Equal '0.2.0' $manifest.python_sdk.minimum 'minimum Python SDK version'
+        Assert-Equal '0.2.0' $manifest.python_sdk.recommended 'recommended Python SDK version'
+        Assert-Equal 2 $manifest.dll.abi_major 'runtime ABI major'
+        Assert-Equal 0 $manifest.dll.abi_minor 'runtime ABI minor'
+        Assert-Equal 15 $manifest.dll.required_features 'runtime required feature flags'
+        Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $output 'vision_runtime.dll')) ([string]$manifest.dll.sha256) 'runtime DLL hash'
+        Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $resources 'model\best.onnx')) ([string]$manifest.model.sha256) 'model hash'
+        Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $resources 'model\best.onnx.schema.json')) ([string]$manifest.model.schema_sha256) 'schema hash'
+        Assert-Equal '1.17.3' $manifest.components.onnxruntime 'ONNX Runtime component version'
+        Assert-Equal '11.8' $manifest.components.cuda 'CUDA component version'
+        Assert-Equal '8.9.7' $manifest.components.cudnn 'cuDNN component version'
+        Assert-Equal '8.6.1.6' $manifest.components.tensorrt 'TensorRT component version'
+        Assert-True ([string]$manifest.runtime_id -match '^sm61-ort1173-trt861-fp32-[0-9A-F]{24}$') 'runtime ID must include stable DLL and model hashes'
+
+        foreach ($path in @($manifest.model.path, $manifest.model.schema_path) + @($manifest.native_directories)) {
+            Assert-True (-not [IO.Path]::IsPathRooted([string]$path)) "manifest path must be relative: $path"
+            Assert-True (-not ([string]$path).Contains('..')) "manifest path must not escape resources: $path"
+            Assert-True (-not ([string]$path).Contains('\')) "manifest path must use canonical separators: $path"
+        }
+    }
+
+    Invoke-Test 'app-local builder refuses to replace an unmarked output directory' {
+        $builder = Join-Path (Join-Path $PSScriptRoot '..') 'build-app-local-package.ps1'
+        $source = Join-Path $testRoot 'app-local-overwrite-source'
+        $output = Join-Path $testRoot 'app-local-unmarked-output'
+        New-PortablePackageFixture -LiteralPath $source
+        New-Item -ItemType Directory -Path $output -Force | Out-Null
+        [IO.File]::WriteAllText((Join-Path $output 'owned-by-client.txt'), 'keep')
+
+        Assert-Throws {
+            & $builder -PortablePackageRoot $source -OutputRoot $output
+        } 'Refusing|unrecognized|marker' 'unmarked client output must never be replaced'
+        Assert-True (Test-Path -LiteralPath (Join-Path $output 'owned-by-client.txt')) 'rejected output must remain untouched'
     }
 
     Invoke-Test 'Python live example has explicit arming and cleanup boundaries' {
