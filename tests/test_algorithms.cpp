@@ -941,20 +941,6 @@ void test_round_trip_sampling_can_recover_from_one_bad_path() {
     require(profile.max_step == 120, "round-trip fitting must retain the runtime clamp");
 }
 
-void test_calibration_sample_retry_does_not_rescale_low_confidence_shift() {
-    require(select_calibration_sample_retry_count(
-                480, 8.0, 0.05, 8.0, 1.5, 270.0
-            ) == 480,
-            "low-response magnitude must be repeated rather than trusted for rescaling");
-}
-
-void test_calibration_sample_retry_can_exceed_runtime_step() {
-    require(select_calibration_sample_retry_count(
-                120, 1.0, 0.90, 8.0, 1.5, 270.0
-            ) == 960,
-            "small reliable final sample should use the calibration-only range");
-}
-
 void test_visual_shift_estimate_preserves_phase_response() {
     cv::Mat image(64, 64, CV_32F);
     cv::randu(image, 0.0F, 255.0F);
@@ -1385,8 +1371,6 @@ int main() {
         test_round_trip_command_plan_alternates_without_final_escalation();
         test_round_trip_samples_assign_real_signed_legs();
         test_round_trip_sampling_can_recover_from_one_bad_path();
-        test_calibration_sample_retry_does_not_rescale_low_confidence_shift();
-        test_calibration_sample_retry_can_exceed_runtime_step();
         test_visual_shift_estimate_preserves_phase_response();
         test_runtime_config_file_overrides_tuning_and_io();
         test_runtime_options_reject_invalid_fire_policy();

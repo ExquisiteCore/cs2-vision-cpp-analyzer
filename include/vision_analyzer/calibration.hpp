@@ -135,14 +135,6 @@ make_calibration_round_trip_samples(
     double maximum_reliable_shift_px,
     const CalibrationProbeMeasure& measure
 );
-[[nodiscard]] int select_calibration_sample_retry_count(
-    int current_counts,
-    double main_shift_px,
-    double phase_response,
-    double target_shift_px,
-    double minimum_measurable_shift_px,
-    double maximum_reliable_shift_px
-);
 [[nodiscard]] CalibrationFit fit_hid_calibration(
     const std::vector<CalibrationSample>& samples,
     int calibration_step_counts

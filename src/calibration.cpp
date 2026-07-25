@@ -400,37 +400,6 @@ std::array<CalibrationSample, 2> make_calibration_round_trip_samples(
     };
 }
 
-int select_calibration_sample_retry_count(
-    int current_counts,
-    double main_shift_px,
-    double phase_response,
-    double target_shift_px,
-    double minimum_measurable_shift_px,
-    double maximum_reliable_shift_px
-) {
-    if (current_counts < kCalibrationProbeMinimumCounts ||
-        current_counts > kCalibrationProbeMaximumCounts ||
-        !std::isfinite(main_shift_px) || main_shift_px < 0.0 ||
-        !std::isfinite(phase_response) ||
-        !std::isfinite(target_shift_px) || target_shift_px <= 0.0 ||
-        !std::isfinite(minimum_measurable_shift_px) || minimum_measurable_shift_px <= 0.0 ||
-        !std::isfinite(maximum_reliable_shift_px) ||
-        maximum_reliable_shift_px <= minimum_measurable_shift_px) {
-        throw std::invalid_argument("invalid HID calibration sample retry values");
-    }
-    if (phase_response < kCalibrationMinimumPhaseResponse &&
-        main_shift_px >= minimum_measurable_shift_px &&
-        main_shift_px <= maximum_reliable_shift_px) {
-        return current_counts;
-    }
-    return adjust_calibration_probe_count(
-        current_counts,
-        main_shift_px,
-        target_shift_px,
-        kCalibrationProbeMaximumCounts
-    );
-}
-
 HidCalibrationProfile run_hid_calibration(const Options& options) {
     apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     std::unique_ptr<std::ofstream> owned_stream;
@@ -472,17 +441,20 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                 CapturedFrame moved = capture(
                     "failed to capture moved DXGI frame for HID calibration"
                 );
-                const VisualShiftEstimate estimate = estimate_visual_shift_with_response(
-                    baseline.image,
-                    moved.image
-                );
                 send_move(-dx, -dy);
                 inverse_required = false;
                 wait_for_settle();
-                baseline = capture(
+                CapturedFrame returned = capture(
                     "failed to capture returned DXGI frame after HID calibration probe"
                 );
-                return estimate;
+                const CalibrationRoundTripMeasurement measurement =
+                    estimate_calibration_round_trip(
+                        baseline.image,
+                        moved.image,
+                        returned.image
+                    );
+                baseline = std::move(returned);
+                return measurement;
             } catch (...) {
                 if (inverse_required) {
                     try {
@@ -550,7 +522,9 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                 minimum_measurable_shift,
                 maximum_reliable_shift,
                 [&](int counts) {
-                    const VisualShiftEstimate estimate = measure_balanced_probe(axis, counts);
+                    const CalibrationRoundTripMeasurement measurement =
+                        measure_balanced_probe(axis, counts);
+                    const VisualShiftEstimate& estimate = measurement.outward;
                     const double main = std::abs(
                         axis == 0 ? estimate.shift.x : estimate.shift.y
                     );
@@ -572,77 +546,34 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                    << " probe_max=" << kCalibrationProbeMaximumCounts << '\n';
         }
 
-        for (std::size_t axis = 0; axis < 2; ++axis) {
-            for (std::size_t level = 0; level < kHidCalibrationLevels; ++level) {
-                for (int repeat = 0; repeat < options.calibration_repeats; ++repeat) {
-                    for (int sign : {1, -1}) {
-                        int absolute_counts = discoveries[axis].levels.counts[level];
-                        int command_counts = absolute_counts * sign;
-                        VisualShiftEstimate estimate = measure_balanced_probe(
-                            axis,
-                            command_counts
-                        );
-                        double main_magnitude = std::abs(
-                            axis == 0 ? estimate.shift.x : estimate.shift.y
-                        );
-                        const bool finite_measurement =
-                            std::isfinite(main_magnitude) && std::isfinite(estimate.response);
-                        const bool bad_range = finite_measurement &&
-                            (main_magnitude < minimum_measurable_shift ||
-                             main_magnitude > maximum_reliable_shift);
-                        const bool bad_response = finite_measurement &&
-                            estimate.response < kCalibrationMinimumPhaseResponse;
-
-                        if (bad_range || bad_response) {
-                            absolute_counts = select_calibration_sample_retry_count(
-                                absolute_counts,
-                                main_magnitude,
-                                estimate.response,
-                                discoveries[axis].levels.target_shift_px[level],
-                                minimum_measurable_shift,
-                                maximum_reliable_shift
-                            );
-                            command_counts = absolute_counts * sign;
-                            output << "probe_retry"
-                                   << " axis=" << (axis == 0 ? 'x' : 'y')
-                                   << " level=" << level
-                                   << " repeat=" << repeat
-                                   << " counts=" << command_counts
-                                   << " observed_shift=" << main_magnitude
-                                   << " response=" << estimate.response
-                                   << " reason=" << (bad_range ? "range" : "response")
-                                   << '\n';
-                            estimate = measure_balanced_probe(
-                                axis,
-                                command_counts
-                            );
-                            main_magnitude = std::abs(
-                                axis == 0 ? estimate.shift.x : estimate.shift.y
-                            );
-                        }
-
-                        const int dx = axis == 0 ? command_counts : 0;
-                        const int dy = axis == 1 ? command_counts : 0;
-                        samples.push_back({
-                            dx,
-                            dy,
-                            estimate.shift,
-                            estimate.response,
-                            static_cast<int>(level),
-                        });
-                        output << "sample"
-                               << " type=move"
-                               << " axis=" << (axis == 0 ? 'x' : 'y')
-                               << " level=" << level
-                               << " repeat=" << repeat
-                               << " counts_dx=" << dx
-                               << " counts_dy=" << dy
-                               << " visual_shift_x=" << estimate.shift.x
-                               << " visual_shift_y=" << estimate.shift.y
-                               << " response=" << estimate.response
-                               << '\n';
-                    }
-                }
+        const auto round_trip_commands = plan_calibration_round_trip_commands(
+            discoveries,
+            options.calibration_repeats
+        );
+        for (const auto& command : round_trip_commands) {
+            const CalibrationRoundTripMeasurement measurement =
+                measure_balanced_probe(command.axis, command.outward_counts);
+            const auto round_trip_samples = make_calibration_round_trip_samples(
+                command.axis,
+                command.level,
+                command.outward_counts,
+                measurement
+            );
+            for (std::size_t leg = 0; leg < round_trip_samples.size(); ++leg) {
+                const CalibrationSample& sample = round_trip_samples[leg];
+                samples.push_back(sample);
+                output << "sample"
+                       << " type=move"
+                       << " leg=" << (leg == 0 ? "outward" : "return")
+                       << " axis=" << (command.axis == 0 ? 'x' : 'y')
+                       << " level=" << command.level
+                       << " repeat=" << command.repeat
+                       << " counts_dx=" << sample.counts_dx
+                       << " counts_dy=" << sample.counts_dy
+                       << " visual_shift_x=" << sample.visual_shift.x
+                       << " visual_shift_y=" << sample.visual_shift.y
+                       << " response=" << sample.phase_response
+                       << '\n';
             }
         }
 
