@@ -112,5 +112,9 @@ DXGI 已打开
 本次更新不需要重新刷 RP2350 固件，也不改变现有 ORT 1.17.3、TensorRT 8.6.1.6、
 CUDA 11.8、cuDNN 8.9.7 环境。
 
+`probe_levels` 之后的 `sample` counts 只应来自该轴列出的三个档位及其相反数。
+除非 `probe_levels` 本身包含 2048，否则正式 `sample` 不会突然出现 2048。每个
+repeat 会分别输出 `leg=outward` 和 `leg=return`，表示真实的移出腿和反向归位腿。
+
 `一键检查并测试.cmd` 始终只做安全试运行，与上述真实 Python 会话是两条独立
 路径，不会自动开始标定或武装输出。
