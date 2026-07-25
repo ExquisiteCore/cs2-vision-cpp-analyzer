@@ -735,8 +735,10 @@ void test_calibration_probe_adjustment_uses_calibration_only_limit() {
 
 void test_calibration_level_plan_compresses_low_sensitivity_range() {
     const CalibrationLevelPlan normal = derive_calibration_level_plan(2.0, 1.5);
-    require(normal.counts == std::array<int, 3>{16, 64, 160},
-            "normal sensitivity should retain 8/32/80-pixel targets");
+    require(normal.counts == std::array<int, 3>{16, 48, 96},
+            "normal sensitivity should use 8/24/48-pixel targets");
+    require(normal.target_shift_px == std::array<double, 3>{8.0, 24.0, 48.0},
+            "normal target shifts should remain in the reliable phase-correlation range");
 
     const CalibrationLevelPlan low = derive_calibration_level_plan(60.0, 1.5);
     require(low.counts == std::array<int, 3>{480, 1024, 2048},

@@ -169,9 +169,9 @@ CalibrationLevelPlan derive_calibration_level_plan(
         throw std::invalid_argument("invalid HID calibration level-plan values");
     }
 
-    const double high = std::min(80.0, static_cast<double>(maximum_counts) / counts_per_pixel);
+    const double high = std::min(48.0, static_cast<double>(maximum_counts) / counts_per_pixel);
     const double low = std::min(8.0, high / 4.0);
-    const double middle = std::min(32.0, high / 2.0);
+    const double middle = std::min(24.0, high / 2.0);
     if (low < minimum_measurable_shift_px) {
         std::ostringstream message;
         message << "HID calibration range is not measurable within "
