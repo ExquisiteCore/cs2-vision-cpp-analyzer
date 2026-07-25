@@ -724,11 +724,35 @@ void test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion() {
     require(!profile.valid, "missing valid X level must reject the profile");
 }
 
-void test_calibration_probe_adjustment_is_bounded() {
-    require(adjust_calibration_probe_count(16, 0.5, 8.0) == 120,
-            "tiny response should scale up to the upper bound");
-    require(adjust_calibration_probe_count(80, 200.0, 80.0) == 32,
+void test_calibration_probe_adjustment_uses_calibration_only_limit() {
+    require(adjust_calibration_probe_count(16, 0.5, 8.0, 2048) == 256,
+            "tiny movement should scale above the runtime max step");
+    require(adjust_calibration_probe_count(512, 0.5, 8.0, 2048) == 2048,
+            "probe adjustment must stop at the calibration limit");
+    require(adjust_calibration_probe_count(80, 200.0, 80.0, 2048) == 32,
             "oversized response should scale down proportionally");
+}
+
+void test_calibration_level_plan_compresses_low_sensitivity_range() {
+    const CalibrationLevelPlan normal = derive_calibration_level_plan(2.0, 1.5);
+    require(normal.counts == std::array<int, 3>{16, 64, 160},
+            "normal sensitivity should retain 8/32/80-pixel targets");
+
+    const CalibrationLevelPlan low = derive_calibration_level_plan(60.0, 1.5);
+    require(low.counts == std::array<int, 3>{480, 1024, 2048},
+            "low sensitivity should use the complete calibration range");
+    require(low.counts[0] < low.counts[1] && low.counts[1] < low.counts[2],
+            "derived counts must be strictly increasing");
+}
+
+void test_calibration_level_plan_rejects_unmeasurable_range() {
+    bool rejected = false;
+    try {
+        (void)derive_calibration_level_plan(400.0, 1.5);
+    } catch (const std::runtime_error& error) {
+        rejected = std::string(error.what()).find("2048") != std::string::npos;
+    }
+    require(rejected, "an unmeasurable 2048-count range must be rejected explicitly");
 }
 
 void test_visual_shift_estimate_preserves_phase_response() {
@@ -1150,7 +1174,9 @@ int main() {
         test_hid_calibration_fit_generates_tuning_values();
         test_adaptive_calibration_fits_signed_axes_and_inverted_y();
         test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion();
-        test_calibration_probe_adjustment_is_bounded();
+        test_calibration_probe_adjustment_uses_calibration_only_limit();
+        test_calibration_level_plan_compresses_low_sensitivity_range();
+        test_calibration_level_plan_rejects_unmeasurable_range();
         test_visual_shift_estimate_preserves_phase_response();
         test_runtime_config_file_overrides_tuning_and_io();
         test_runtime_options_reject_invalid_fire_policy();

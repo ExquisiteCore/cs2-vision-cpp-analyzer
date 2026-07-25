@@ -137,11 +137,12 @@ cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after) {
 int adjust_calibration_probe_count(
     int current_counts,
     double observed_shift_px,
-    double target_shift_px
+    double target_shift_px,
+    int maximum_counts
 ) {
-    if (current_counts <= 0 || !std::isfinite(observed_shift_px) ||
-        observed_shift_px < 0.0 || !std::isfinite(target_shift_px) ||
-        target_shift_px <= 0.0) {
+    if (current_counts <= 0 || maximum_counts < kCalibrationProbeMinimumCounts ||
+        !std::isfinite(observed_shift_px) || observed_shift_px < 0.0 ||
+        !std::isfinite(target_shift_px) || target_shift_px <= 0.0) {
         throw std::invalid_argument("invalid adaptive HID calibration probe values");
     }
     const double scaled = static_cast<double>(current_counts) * target_shift_px /
@@ -149,7 +150,58 @@ int adjust_calibration_probe_count(
     if (!std::isfinite(scaled)) {
         throw std::invalid_argument("adaptive HID calibration probe overflowed");
     }
-    return static_cast<int>(std::clamp(std::lround(scaled), 8L, 120L));
+    const double bounded = std::clamp(
+        scaled,
+        static_cast<double>(kCalibrationProbeMinimumCounts),
+        static_cast<double>(maximum_counts)
+    );
+    return static_cast<int>(std::lround(bounded));
+}
+
+CalibrationLevelPlan derive_calibration_level_plan(
+    double counts_per_pixel,
+    double minimum_measurable_shift_px,
+    int maximum_counts
+) {
+    if (!std::isfinite(counts_per_pixel) || counts_per_pixel <= 0.0 ||
+        !std::isfinite(minimum_measurable_shift_px) || minimum_measurable_shift_px <= 0.0 ||
+        maximum_counts < kCalibrationProbeMinimumCounts + 2) {
+        throw std::invalid_argument("invalid HID calibration level-plan values");
+    }
+
+    const double high = std::min(80.0, static_cast<double>(maximum_counts) / counts_per_pixel);
+    const double low = std::min(8.0, high / 4.0);
+    const double middle = std::min(32.0, high / 2.0);
+    if (low < minimum_measurable_shift_px) {
+        std::ostringstream message;
+        message << "HID calibration range is not measurable within "
+                << maximum_counts << " counts";
+        throw std::runtime_error(message.str());
+    }
+
+    CalibrationLevelPlan plan;
+    plan.target_shift_px = {low, middle, high};
+    const std::array<long, kHidCalibrationLevels> rounded = {
+        std::lround(low * counts_per_pixel),
+        std::lround(middle * counts_per_pixel),
+        std::lround(high * counts_per_pixel),
+    };
+    plan.counts[0] = static_cast<int>(std::clamp(
+        rounded[0],
+        static_cast<long>(kCalibrationProbeMinimumCounts),
+        static_cast<long>(maximum_counts - 2)
+    ));
+    plan.counts[1] = static_cast<int>(std::clamp(
+        rounded[1],
+        static_cast<long>(plan.counts[0] + 1),
+        static_cast<long>(maximum_counts - 1)
+    ));
+    plan.counts[2] = static_cast<int>(std::clamp(
+        rounded[2],
+        static_cast<long>(plan.counts[1] + 1),
+        static_cast<long>(maximum_counts)
+    ));
+    return plan;
 }
 
 HidCalibrationProfile run_hid_calibration(const Options& options) {

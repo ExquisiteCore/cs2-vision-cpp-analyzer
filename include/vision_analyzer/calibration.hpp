@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <functional>
 #include <iosfwd>
 #include <vector>
 
@@ -31,6 +33,17 @@ struct VisualShiftEstimate {
     double response = 0.0;
 };
 
+constexpr int kCalibrationProbeMinimumCounts = 8;
+constexpr int kCalibrationProbeMaximumCounts = 2048;
+constexpr int kCalibrationDiscoveryMaximumAttempts = 8;
+constexpr int kCalibrationRuntimeMaxStep = 120;
+constexpr double kCalibrationMinimumPhaseResponse = 0.15;
+
+struct CalibrationLevelPlan {
+    std::array<int, kHidCalibrationLevels> counts{};
+    std::array<double, kHidCalibrationLevels> target_shift_px{};
+};
+
 struct CalibrationFit {
     bool valid = false;
     double hid_gain = 1.0;
@@ -53,7 +66,13 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
 [[nodiscard]] int adjust_calibration_probe_count(
     int current_counts,
     double observed_shift_px,
-    double target_shift_px
+    double target_shift_px,
+    int maximum_counts = kCalibrationProbeMaximumCounts
+);
+[[nodiscard]] CalibrationLevelPlan derive_calibration_level_plan(
+    double counts_per_pixel,
+    double minimum_measurable_shift_px,
+    int maximum_counts = kCalibrationProbeMaximumCounts
 );
 [[nodiscard]] CalibrationFit fit_hid_calibration(
     const std::vector<CalibrationSample>& samples,
