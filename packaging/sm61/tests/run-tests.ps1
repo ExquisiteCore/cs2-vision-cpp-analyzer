@@ -414,6 +414,14 @@ try {
         $setup = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\setup-and-test.ps1') -Raw
         Assert-True ($setup -notmatch '(?i)test-dxgi\.ps1') 'one-click setup must not run DXGI automatically'
 
+        $readmeName = 'README_' + [char]0x4E2D + [char]0x6587 + '.md'
+        $readme = Get-Content -LiteralPath (Join-Path $templateRoot $readmeName) -Raw -Encoding UTF8
+        $protocolV2 = ([string][char]0x534F) + [char]0x8BAE + ' v2'
+        $twoSeconds = ([string][char]0x4E24) + [char]0x79D2
+        foreach ($token in @($protocolV2, 'ping/info/caps', '500 ms', $twoSeconds)) {
+            Assert-True ($readme.Contains($token)) "package README must document $token"
+        }
+
         $common = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\common.ps1') -Raw
         foreach ($relative in @(
             'python\cs2_vision_runtime\__init__.py',

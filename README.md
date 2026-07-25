@@ -25,7 +25,7 @@ Windows 构建环境：
 ```text
 Visual Studio 2022 Build Tools with MSVC
 xmake
-CMake 3.14+（使用 CMake 构建时）
+CMake 3.20+（使用 CMake 构建时）
 Git
 ```
 
@@ -37,6 +37,11 @@ OpenCV DNN，由 xmake 解析依赖
 实时 HID 模式需要匹配的 *.schema.json 文件
 真实 HID 输出需要 RP2350 HID Bridge C++ SDK
 ```
+
+真实 HID 模式要求板卡固件和 C++ SDK 都使用协议 v2。运行时打开 COM 口后会依次执行
+`ping()`、`info()` 和 `caps()` 三项只读健康检查，并要求固件报告鼠标、可靠重试、
+安全租约和取消能力；检查失败时不会进入标定或物理输出。协议 v2 SDK 每 500 ms 发送
+一次心跳，固件在心跳、DTR 或 USB 连接中断后使用两秒安全租约释放保持中的输入。
 
 GTX 1080 Ti 生产加速环境：
 
