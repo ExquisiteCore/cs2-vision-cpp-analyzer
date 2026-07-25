@@ -34,6 +34,11 @@ struct VisualShiftEstimate {
     double response = 0.0;
 };
 
+struct CalibrationRoundTripMeasurement {
+    VisualShiftEstimate outward;
+    VisualShiftEstimate inverse;
+};
+
 constexpr int kCalibrationProbeMinimumCounts = 8;
 constexpr int kCalibrationProbeMaximumCounts = 2048;
 constexpr int kCalibrationDiscoveryMaximumAttempts = 8;
@@ -58,6 +63,13 @@ struct CalibrationAxisDiscovery {
     CalibrationLevelPlan levels;
 };
 
+struct CalibrationRoundTripCommand {
+    std::size_t axis = 0;
+    int level = 0;
+    int repeat = 0;
+    int outward_counts = 0;
+};
+
 using CalibrationProbeMeasure = std::function<VisualShiftEstimate(int)>;
 
 struct CalibrationFit {
@@ -79,6 +91,23 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     const cv::Mat& after
 );
 [[nodiscard]] cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after);
+[[nodiscard]] CalibrationRoundTripMeasurement estimate_calibration_round_trip(
+    const cv::Mat& baseline,
+    const cv::Mat& moved,
+    const cv::Mat& returned
+);
+[[nodiscard]] std::vector<CalibrationRoundTripCommand>
+plan_calibration_round_trip_commands(
+    const std::array<CalibrationAxisDiscovery, 2>& discoveries,
+    int repeats
+);
+[[nodiscard]] std::array<CalibrationSample, 2>
+make_calibration_round_trip_samples(
+    std::size_t axis,
+    int level,
+    int outward_counts,
+    const CalibrationRoundTripMeasurement& measurement
+);
 [[nodiscard]] int adjust_calibration_probe_count(
     int current_counts,
     double observed_shift_px,

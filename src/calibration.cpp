@@ -134,6 +134,17 @@ cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after) {
     return estimate_visual_shift_with_response(before, after).shift;
 }
 
+CalibrationRoundTripMeasurement estimate_calibration_round_trip(
+    const cv::Mat& baseline,
+    const cv::Mat& moved,
+    const cv::Mat& returned
+) {
+    return {
+        estimate_visual_shift_with_response(baseline, moved),
+        estimate_visual_shift_with_response(moved, returned),
+    };
+}
+
 int adjust_calibration_probe_count(
     int current_counts,
     double observed_shift_px,
@@ -327,6 +338,66 @@ CalibrationAxisDiscovery discover_calibration_axis(
         counts = plan.next_counts;
     }
     throw std::runtime_error("HID calibration discovery exhausted its attempt budget");
+}
+
+std::vector<CalibrationRoundTripCommand> plan_calibration_round_trip_commands(
+    const std::array<CalibrationAxisDiscovery, 2>& discoveries,
+    int repeats
+) {
+    if (repeats < 2) {
+        throw std::invalid_argument("HID calibration round-trip repeats must be at least two");
+    }
+    std::vector<CalibrationRoundTripCommand> commands;
+    commands.reserve(
+        discoveries.size() * kHidCalibrationLevels * static_cast<std::size_t>(repeats)
+    );
+    for (std::size_t axis = 0; axis < discoveries.size(); ++axis) {
+        for (std::size_t level = 0; level < kHidCalibrationLevels; ++level) {
+            const int counts = discoveries[axis].levels.counts[level];
+            if (counts < kCalibrationProbeMinimumCounts ||
+                counts > kCalibrationProbeMaximumCounts) {
+                throw std::invalid_argument(
+                    "HID calibration round-trip count is outside the discovered range"
+                );
+            }
+            for (int repeat = 0; repeat < repeats; ++repeat) {
+                commands.push_back({
+                    axis,
+                    static_cast<int>(level),
+                    repeat,
+                    repeat % 2 == 0 ? counts : -counts,
+                });
+            }
+        }
+    }
+    return commands;
+}
+
+std::array<CalibrationSample, 2> make_calibration_round_trip_samples(
+    std::size_t axis,
+    int level,
+    int outward_counts,
+    const CalibrationRoundTripMeasurement& measurement
+) {
+    if (axis > 1 || level < 0 || level >= static_cast<int>(kHidCalibrationLevels) ||
+        outward_counts == 0 ||
+        outward_counts < -kCalibrationProbeMaximumCounts ||
+        outward_counts > kCalibrationProbeMaximumCounts) {
+        throw std::invalid_argument("invalid HID calibration round-trip sample values");
+    }
+    const auto make_sample = [&](int signed_counts, const VisualShiftEstimate& estimate) {
+        return CalibrationSample{
+            axis == 0 ? signed_counts : 0,
+            axis == 1 ? signed_counts : 0,
+            estimate.shift,
+            estimate.response,
+            level,
+        };
+    };
+    return {
+        make_sample(outward_counts, measurement.outward),
+        make_sample(-outward_counts, measurement.inverse),
+    };
 }
 
 int select_calibration_sample_retry_count(

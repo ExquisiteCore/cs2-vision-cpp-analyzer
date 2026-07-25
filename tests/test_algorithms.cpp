@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include <opencv2/imgproc.hpp>
+
 #include "vision_analyzer/aim_controller.hpp"
 #include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/dxgi_roi.hpp"
@@ -823,6 +825,122 @@ void test_calibration_axis_discovery_reports_probe_exhaustion() {
             "discovery should test the agreed limit before rejecting");
 }
 
+void test_round_trip_estimation_measures_outward_and_inverse_frames() {
+    cv::Mat baseline(64, 64, CV_32F);
+    cv::randu(baseline, 0.0F, 255.0F);
+    cv::Mat moved;
+    const cv::Mat transform = (cv::Mat_<double>(2, 3) <<
+        1.0, 0.0, 5.0,
+        0.0, 1.0, -3.0);
+    cv::warpAffine(
+        baseline,
+        moved,
+        transform,
+        baseline.size(),
+        cv::INTER_LINEAR,
+        cv::BORDER_WRAP
+    );
+
+    const CalibrationRoundTripMeasurement measurement =
+        estimate_calibration_round_trip(baseline, moved, baseline);
+    require_near(static_cast<float>(measurement.outward.shift.x), 5.0F, 0.1F,
+                 "outward leg should use baseline-to-moved frames");
+    require_near(static_cast<float>(measurement.outward.shift.y), -3.0F, 0.1F,
+                 "outward Y shift should be preserved");
+    require_near(static_cast<float>(measurement.inverse.shift.x), -5.0F, 0.1F,
+                 "inverse leg should use moved-to-returned frames");
+    require_near(static_cast<float>(measurement.inverse.shift.y), 3.0F, 0.1F,
+                 "inverse Y shift should be measured independently");
+    require(measurement.outward.response > 0.90 && measurement.inverse.response > 0.90,
+            "both synthetic round-trip legs should have strong responses");
+}
+
+void test_round_trip_command_plan_alternates_without_final_escalation() {
+    std::array<CalibrationAxisDiscovery, 2> discoveries;
+    discoveries[0].levels.counts = {11, 32, 65};
+    discoveries[1].levels.counts = {12, 33, 66};
+
+    const auto commands = plan_calibration_round_trip_commands(discoveries, 2);
+    std::vector<int> actual;
+    for (const auto& command : commands) {
+        actual.push_back(command.outward_counts);
+    }
+    require(actual == std::vector<int>({
+                11, -11, 32, -32, 65, -65,
+                12, -12, 33, -33, 66, -66,
+            }),
+            "round-trip plans should alternate signs and keep discovered counts");
+}
+
+void test_round_trip_samples_assign_real_signed_legs() {
+    CalibrationRoundTripMeasurement measurement;
+    measurement.outward = {{-12.0, 0.25}, 0.70};
+    measurement.inverse = {{11.5, -0.20}, 0.65};
+
+    const auto x_samples = make_calibration_round_trip_samples(
+        0, 1, 40, measurement
+    );
+    require(x_samples[0].counts_dx == 40 && x_samples[0].counts_dy == 0,
+            "X outward sample should keep its signed command");
+    require(x_samples[1].counts_dx == -40 && x_samples[1].counts_dy == 0,
+            "X return sample should use the exact inverse command");
+    require_near(static_cast<float>(x_samples[0].visual_shift.x), -12.0F, 0.001F,
+                 "outward visual shift must not be synthesized");
+    require_near(static_cast<float>(x_samples[1].visual_shift.x), 11.5F, 0.001F,
+                 "return visual shift must be preserved independently");
+    require_near(static_cast<float>(x_samples[1].phase_response), 0.65F, 0.001F,
+                 "return response must be preserved independently");
+
+    const auto y_samples = make_calibration_round_trip_samples(
+        1, 2, -50, measurement
+    );
+    require(y_samples[0].counts_dx == 0 && y_samples[0].counts_dy == -50,
+            "Y outward sample should keep a negative command");
+    require(y_samples[1].counts_dx == 0 && y_samples[1].counts_dy == 50,
+            "Y return sample should invert the command");
+}
+
+void test_round_trip_sampling_can_recover_from_one_bad_path() {
+    std::vector<CalibrationSample> samples = {
+        {0, 0, {0.01, -0.01}, 0.99, -1},
+    };
+    const std::array<int, 3> counts = {16, 48, 96};
+    const std::array<double, 3> shifts = {8.0, 24.0, 48.0};
+    for (std::size_t axis = 0; axis < 2; ++axis) {
+        for (std::size_t level = 0; level < counts.size(); ++level) {
+            CalibrationRoundTripMeasurement bad;
+            bad.outward = {{0.0, 0.0}, 0.05};
+            bad.inverse = {{0.0, 0.0}, 0.05};
+            const auto rejected = make_calibration_round_trip_samples(
+                axis, static_cast<int>(level), counts[level], bad
+            );
+            samples.insert(samples.end(), rejected.begin(), rejected.end());
+
+            CalibrationRoundTripMeasurement good;
+            if (axis == 0) {
+                good.outward = {{shifts[level], 0.1}, 0.90};
+                good.inverse = {{-shifts[level], -0.1}, 0.90};
+            } else {
+                good.outward = {{0.1, shifts[level]}, 0.90};
+                good.inverse = {{-0.1, -shifts[level]}, 0.90};
+            }
+            const auto accepted = make_calibration_round_trip_samples(
+                axis, static_cast<int>(level), -counts[level], good
+            );
+            samples.insert(samples.end(), accepted.begin(), accepted.end());
+        }
+    }
+
+    const auto profile = fit_adaptive_hid_calibration(
+        samples, {1920, 1080}, kCalibrationRuntimeMaxStep
+    );
+    require(profile.valid,
+            "one reliable opposite round trip should fill both signed fitter buckets");
+    require(profile.accepted_samples == 12,
+            "only the twelve reliable signed samples should be accepted");
+    require(profile.max_step == 120, "round-trip fitting must retain the runtime clamp");
+}
+
 void test_calibration_sample_retry_does_not_rescale_low_confidence_shift() {
     require(select_calibration_sample_retry_count(
                 480, 8.0, 0.05, 8.0, 1.5, 270.0
@@ -1263,6 +1381,10 @@ int main() {
         test_calibration_probe_planner_accepts_signal_and_rejects_cross_axis();
         test_calibration_axis_discovery_derives_low_sensitivity_levels();
         test_calibration_axis_discovery_reports_probe_exhaustion();
+        test_round_trip_estimation_measures_outward_and_inverse_frames();
+        test_round_trip_command_plan_alternates_without_final_escalation();
+        test_round_trip_samples_assign_real_signed_legs();
+        test_round_trip_sampling_can_recover_from_one_bad_path();
         test_calibration_sample_retry_does_not_rescale_low_confidence_shift();
         test_calibration_sample_retry_can_exceed_runtime_step();
         test_visual_shift_estimate_preserves_phase_response();
