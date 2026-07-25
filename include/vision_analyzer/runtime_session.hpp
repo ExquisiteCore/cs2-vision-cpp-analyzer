@@ -29,7 +29,7 @@ struct RuntimeStepResult {
 class RuntimeSession {
 public:
     RuntimeSession() = default;
-    ~RuntimeSession();
+    ~RuntimeSession() noexcept;
 
     RuntimeSession(const RuntimeSession&) = delete;
     RuntimeSession& operator=(const RuntimeSession&) = delete;
@@ -40,7 +40,7 @@ public:
     void set_fire_enabled(bool enabled);
     void set_fire_policy(FirePolicy policy);
     void stop_all();
-    void close();
+    void close() noexcept;
 
     [[nodiscard]] bool is_open() const;
     [[nodiscard]] std::string detector_name() const;

@@ -26,6 +26,8 @@
 
 using namespace vision_analyzer;
 
+static_assert(noexcept(std::declval<RuntimeSession&>().close()));
+
 namespace {
 
 void require(bool condition, const char* message) {
@@ -1003,12 +1005,31 @@ public:
 
     void stop_all() override {
         ++stop_calls;
+        if (throw_on_stop) {
+            throw std::runtime_error("simulated stop failure");
+        }
+    }
+
+    void close() noexcept override {
+        ++close_calls;
     }
 
     std::vector<std::pair<std::int16_t, std::int16_t>> moves;
     int left_clicks = 0;
     int stop_calls = 0;
+    int close_calls = 0;
+    bool throw_on_stop = false;
 };
+
+void test_hid_close_continues_after_stop_failure() {
+    RecordingHidClient client;
+    client.throw_on_stop = true;
+
+    close_hid_client_noexcept(&client);
+
+    require(client.stop_calls == 1, "shutdown must attempt STOP_ALL once");
+    require(client.close_calls == 1, "shutdown must close after STOP_ALL failure");
+}
 
 void test_hid_action_sender_requires_arming_and_stops_when_disarmed() {
     RecordingHidClient client;
@@ -1145,6 +1166,7 @@ int main() {
         test_fire_cooldown_and_disable_reset();
         test_rp2350_v2_health_accepts_required_capabilities();
         test_rp2350_v2_health_rejects_legacy_or_incomplete_devices();
+        test_hid_close_continues_after_stop_failure();
         test_hid_action_sender_requires_arming_and_stops_when_disarmed();
         test_runtime_session_starts_closed();
         test_runtime_status_includes_parseable_timing_metrics();

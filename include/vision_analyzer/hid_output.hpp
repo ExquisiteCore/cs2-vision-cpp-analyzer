@@ -28,7 +28,10 @@ public:
     virtual void move_relative(std::int16_t dx, std::int16_t dy) = 0;
     virtual void click_left() = 0;
     virtual void stop_all() = 0;
+    virtual void close() noexcept = 0;
 };
+
+void close_hid_client_noexcept(HidClient* client) noexcept;
 
 class HidActionSender {
 public:

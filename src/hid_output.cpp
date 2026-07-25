@@ -36,10 +36,7 @@ public:
     }
 
     ~Rp2350HidClient() override {
-        try {
-            bridge_.stop_all();
-        } catch (...) {
-        }
+        close();
     }
 
     void move_relative(std::int16_t dx, std::int16_t dy) override {
@@ -52,6 +49,10 @@ public:
 
     void stop_all() override {
         bridge_.stop_all();
+    }
+
+    void close() noexcept override {
+        bridge_.close();
     }
 
 private:
@@ -79,6 +80,17 @@ HidDeviceHealth parse_rp2350_v2_health(
     }
 
     return HidDeviceHealth{kRp2350ProtocolV2, capabilities};
+}
+
+void close_hid_client_noexcept(HidClient* client) noexcept {
+    if (client == nullptr) {
+        return;
+    }
+    try {
+        client->stop_all();
+    } catch (...) {
+    }
+    client->close();
 }
 
 HidActionSender::HidActionSender(HidClient& client)

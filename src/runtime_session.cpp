@@ -9,7 +9,7 @@
 
 namespace vision_analyzer {
 
-RuntimeSession::~RuntimeSession() {
+RuntimeSession::~RuntimeSession() noexcept {
     close();
 }
 
@@ -191,22 +191,30 @@ void RuntimeSession::stop_all() {
     }
 }
 
-void RuntimeSession::close() {
-    set_fire_enabled(false);
-    stop_all();
+void RuntimeSession::close() noexcept {
+    open_ = false;
+    try {
+        set_fire_enabled(false);
+    } catch (...) {
+    }
+
+    hid_sender_.reset();
+    close_hid_client_noexcept(hid_client_.get());
+    hid_client_.reset();
+
     if (frame_source_) {
-        frame_source_->release();
+        try {
+            frame_source_->release();
+        } catch (...) {
+        }
     }
     action_log_.close();
     analysis_state_.reset();
     selector_.reset();
     track_manager_.reset();
     aim_controller_.reset();
-    hid_sender_.reset();
-    hid_client_.reset();
     detector_.reset();
     frame_source_.reset();
-    open_ = false;
 }
 
 bool RuntimeSession::is_open() const {
