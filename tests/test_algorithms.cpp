@@ -1021,6 +1021,26 @@ CalibrationRoundTripMeasurement incoherent_axis_round_trip() {
     };
 }
 
+CalibrationRoundTripMeasurement coherent_signed_axis_round_trip(
+    std::size_t axis,
+    int outward_counts,
+    double shift
+) {
+    CalibrationRoundTripMeasurement measurement =
+        coherent_axis_round_trip(axis, shift);
+    if (outward_counts < 0) {
+        std::swap(measurement.outward, measurement.inverse);
+    }
+    return measurement;
+}
+
+CalibrationLevelMeasurement level_measurement(
+    int outward_counts,
+    CalibrationRoundTripMeasurement round_trip
+) {
+    return {outward_counts, std::move(round_trip)};
+}
+
 void test_calibration_level_selection_falls_back_strictly_downward() {
     std::vector<int> attempted;
     const CalibrationLevelSelection selection = select_calibration_level(
@@ -1033,14 +1053,14 @@ void test_calibration_level_selection_falls_back_strictly_downward() {
         [&](int counts) {
             attempted.push_back(counts);
             if (counts == 49) {
-                return std::vector<CalibrationRoundTripMeasurement>{
-                    coherent_axis_round_trip(0, 34.0),
-                    coherent_axis_round_trip(0, 34.2),
+                return std::vector<CalibrationLevelMeasurement>{
+                    level_measurement(counts, coherent_axis_round_trip(0, 34.0)),
+                    level_measurement(-counts, coherent_axis_round_trip(0, 34.2)),
                 };
             }
-            return std::vector<CalibrationRoundTripMeasurement>{
-                incoherent_axis_round_trip(),
-                incoherent_axis_round_trip(),
+            return std::vector<CalibrationLevelMeasurement>{
+                level_measurement(counts, incoherent_axis_round_trip()),
+                level_measurement(-counts, incoherent_axis_round_trip()),
             };
         }
     );
@@ -1068,8 +1088,8 @@ void test_calibration_level_selection_never_shrinks_the_low_level() {
             270.0,
             [&](int counts) {
                 attempted.push_back(counts);
-                return std::vector<CalibrationRoundTripMeasurement>{
-                    incoherent_axis_round_trip(),
+                return std::vector<CalibrationLevelMeasurement>{
+                    level_measurement(counts, incoherent_axis_round_trip()),
                 };
             }
         );
@@ -1094,8 +1114,8 @@ void test_calibration_level_selection_has_bounded_distinct_midpoints() {
             270.0,
             [&](int counts) {
                 attempted.push_back(counts);
-                return std::vector<CalibrationRoundTripMeasurement>{
-                    incoherent_axis_round_trip(),
+                return std::vector<CalibrationLevelMeasurement>{
+                    level_measurement(counts, incoherent_axis_round_trip()),
                 };
             }
         );
@@ -1127,6 +1147,73 @@ void test_calibration_round_trip_usability_requires_both_opposite_legs() {
     measurement.inverse.shift.x = -24.0;
     require(!usable_calibration_round_trip(0, measurement, 1.5, 270.0),
             "same-direction visual legs should not fill opposite signed buckets");
+}
+
+void test_recovered_level_measurements_fit_three_increasing_knots() {
+    std::vector<CalibrationSample> samples = {
+        {0, 0, {0.01, -0.01}, 0.99, -1},
+        {0, 0, {-0.01, 0.01}, 0.99, -1},
+    };
+    const std::array<int, 3> planned = {11, 33, 66};
+    for (std::size_t axis = 0; axis < 2; ++axis) {
+        int previous_count = 0;
+        for (std::size_t level = 0; level < planned.size(); ++level) {
+            const CalibrationLevelSelection selection = select_calibration_level(
+                axis,
+                static_cast<int>(level),
+                previous_count,
+                planned[level],
+                1.5,
+                270.0,
+                [&](int counts) {
+                    const bool rejected_planned_high =
+                        axis == 0 && level == 2 && counts == planned[level];
+                    if (rejected_planned_high) {
+                        return std::vector<CalibrationLevelMeasurement>{
+                            level_measurement(counts, incoherent_axis_round_trip()),
+                            level_measurement(-counts, incoherent_axis_round_trip()),
+                        };
+                    }
+                    const double shift = static_cast<double>(counts) / 1.4;
+                    return std::vector<CalibrationLevelMeasurement>{
+                        level_measurement(
+                            counts,
+                            coherent_signed_axis_round_trip(axis, counts, shift)
+                        ),
+                        level_measurement(
+                            -counts,
+                            coherent_signed_axis_round_trip(axis, -counts, shift)
+                        ),
+                    };
+                }
+            );
+            previous_count = selection.counts;
+            for (const CalibrationLevelMeasurement& measured : selection.measurements) {
+                const auto signed_samples = make_calibration_round_trip_samples(
+                    axis,
+                    static_cast<int>(level),
+                    measured.outward_counts,
+                    measured.round_trip
+                );
+                samples.insert(samples.end(), signed_samples.begin(), signed_samples.end());
+            }
+        }
+    }
+
+    const HidCalibrationProfile profile = fit_adaptive_hid_calibration(
+        samples,
+        {1920, 1080},
+        kCalibrationRuntimeMaxStep
+    );
+    require(profile.valid,
+            "one recovered high level should still produce a valid profile");
+    require(profile.accepted_samples >= 12,
+            "one coherent round trip per axis and level should satisfy the minimum");
+    require(profile.x.shift_px[0] < profile.x.shift_px[1] &&
+            profile.x.shift_px[1] < profile.x.shift_px[2],
+            "fallback should still produce three increasing X knots");
+    require(profile.max_step == 120,
+            "recovered calibration must retain the runtime movement clamp");
 }
 
 cv::Mat make_textured_calibration_scene(const cv::Size& size) {
@@ -1817,6 +1904,7 @@ int main() {
         test_calibration_level_selection_never_shrinks_the_low_level();
         test_calibration_level_selection_has_bounded_distinct_midpoints();
         test_calibration_round_trip_usability_requires_both_opposite_legs();
+        test_recovered_level_measurements_fit_three_increasing_knots();
         test_robust_visual_shift_ignores_static_overlay_and_blank_tile();
         test_robust_visual_shift_requires_multiple_textured_regions();
         test_robust_visual_shift_rejects_one_isolated_textured_region();

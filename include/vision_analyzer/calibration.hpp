@@ -74,17 +74,22 @@ struct CalibrationRoundTripCommand {
     int outward_counts = 0;
 };
 
+struct CalibrationLevelMeasurement {
+    int outward_counts = 0;
+    CalibrationRoundTripMeasurement round_trip;
+};
+
 struct CalibrationLevelSelection {
     bool accepted = false;
     int counts = 0;
     std::vector<int> attempted_counts;
-    std::vector<CalibrationRoundTripMeasurement> measurements;
+    std::vector<CalibrationLevelMeasurement> measurements;
 };
 
 using CalibrationProbeMeasure = std::function<CalibrationRoundTripMeasurement(int)>;
 using CalibrationDiscoveryPause = std::function<void()>;
 using CalibrationLevelMeasure =
-    std::function<std::vector<CalibrationRoundTripMeasurement>(int)>;
+    std::function<std::vector<CalibrationLevelMeasurement>(int)>;
 
 struct CalibrationFit {
     bool valid = false;

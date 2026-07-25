@@ -672,12 +672,18 @@ CalibrationLevelSelection select_calibration_level(
     CalibrationLevelSelection selection;
     const auto try_count = [&](int counts) {
         selection.attempted_counts.push_back(counts);
-        const std::vector<CalibrationRoundTripMeasurement> measured = measure(counts);
-        std::vector<CalibrationRoundTripMeasurement> usable;
-        for (const CalibrationRoundTripMeasurement& measurement : measured) {
+        const std::vector<CalibrationLevelMeasurement> measured = measure(counts);
+        std::vector<CalibrationLevelMeasurement> usable;
+        for (const CalibrationLevelMeasurement& measurement : measured) {
+            if (measurement.outward_counts == 0 ||
+                std::abs(measurement.outward_counts) != counts) {
+                throw std::runtime_error(
+                    "HID calibration level measurement count does not match candidate"
+                );
+            }
             if (usable_calibration_round_trip(
                     axis,
-                    measurement,
+                    measurement.round_trip,
                     minimum_shift_px,
                     maximum_shift_px
                 )) {
@@ -873,35 +879,96 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                    << " probe_max=" << kCalibrationProbeMaximumCounts << '\n';
         }
 
-        const auto round_trip_commands = plan_calibration_round_trip_commands(
-            discoveries,
-            options.calibration_repeats
-        );
-        for (const auto& command : round_trip_commands) {
-            const CalibrationRoundTripMeasurement measurement =
-                measure_balanced_probe(command.axis, command.outward_counts);
-            const auto round_trip_samples = make_calibration_round_trip_samples(
-                command.axis,
-                command.level,
-                command.outward_counts,
-                measurement
-            );
-            for (std::size_t leg = 0; leg < round_trip_samples.size(); ++leg) {
-                const CalibrationSample& sample = round_trip_samples[leg];
-                samples.push_back(sample);
-                output << "sample"
-                       << " type=move"
-                       << " leg=" << (leg == 0 ? "outward" : "return")
-                       << " axis=" << (command.axis == 0 ? 'x' : 'y')
-                       << " level=" << command.level
-                       << " repeat=" << command.repeat
-                       << " counts_dx=" << sample.counts_dx
-                       << " counts_dy=" << sample.counts_dy
-                       << " visual_shift_x=" << sample.visual_shift.x
-                       << " visual_shift_y=" << sample.visual_shift.y
-                       << " response=" << sample.phase_response
-                       << '\n';
+        std::array<std::array<int, kHidCalibrationLevels>, 2> selected_counts{};
+        for (std::size_t axis = 0; axis < discoveries.size(); ++axis) {
+            int previous_count = 0;
+            for (std::size_t level = 0; level < kHidCalibrationLevels; ++level) {
+                int measurement_batch = 0;
+                const CalibrationLevelSelection selection = select_calibration_level(
+                    axis,
+                    static_cast<int>(level),
+                    previous_count,
+                    discoveries[axis].levels.counts[level],
+                    minimum_measurable_shift,
+                    maximum_reliable_shift,
+                    [&](int candidate_counts) {
+                        std::vector<CalibrationLevelMeasurement> measured;
+                        measured.reserve(
+                            static_cast<std::size_t>(options.calibration_repeats)
+                        );
+                        const int batch = measurement_batch++;
+                        for (int repeat = 0;
+                             repeat < options.calibration_repeats;
+                             ++repeat) {
+                            const int outward_counts =
+                                repeat % 2 == 0 ? candidate_counts : -candidate_counts;
+                            const CalibrationRoundTripMeasurement measurement =
+                                measure_balanced_probe(axis, outward_counts);
+                            measured.push_back({outward_counts, measurement});
+
+                            const auto raw_samples = make_calibration_round_trip_samples(
+                                axis,
+                                static_cast<int>(level),
+                                outward_counts,
+                                measurement
+                            );
+                            for (std::size_t leg = 0; leg < raw_samples.size(); ++leg) {
+                                const CalibrationSample& sample = raw_samples[leg];
+                                const VisualShiftEstimate& estimate =
+                                    leg == 0 ? measurement.outward : measurement.inverse;
+                                output << "sample"
+                                       << " type=move"
+                                       << " leg=" << (leg == 0 ? "outward" : "return")
+                                       << " axis=" << (axis == 0 ? 'x' : 'y')
+                                       << " level=" << level
+                                       << " attempt=" << batch
+                                       << " repeat=" << repeat
+                                       << " counts_dx=" << sample.counts_dx
+                                       << " counts_dy=" << sample.counts_dy
+                                       << " visual_shift_x=" << sample.visual_shift.x
+                                       << " visual_shift_y=" << sample.visual_shift.y
+                                       << " response=" << sample.phase_response
+                                       << " coherent=" << (estimate.coherent ? 1 : 0)
+                                       << '\n';
+                            }
+                        }
+                        return measured;
+                    }
+                );
+
+                for (std::size_t attempt = 1;
+                     attempt < selection.attempted_counts.size();
+                     ++attempt) {
+                    const int from = selection.attempted_counts[attempt - 1];
+                    const int to = selection.attempted_counts[attempt];
+                    if (to != from) {
+                        output << "level_fallback"
+                               << " axis=" << (axis == 0 ? 'x' : 'y')
+                               << " level=" << level
+                               << " from_counts=" << from
+                               << " to_counts=" << to
+                               << " reason=no_coherent_shift"
+                               << '\n';
+                    }
+                }
+
+                selected_counts[axis][level] = selection.counts;
+                previous_count = selection.counts;
+                for (const CalibrationLevelMeasurement& measured :
+                     selection.measurements) {
+                    const auto accepted = make_calibration_round_trip_samples(
+                        axis,
+                        static_cast<int>(level),
+                        measured.outward_counts,
+                        measured.round_trip
+                    );
+                    samples.insert(samples.end(), accepted.begin(), accepted.end());
+                }
             }
+            const auto& counts = selected_counts[axis];
+            output << "sample_levels axis=" << (axis == 0 ? 'x' : 'y')
+                   << " counts=" << counts[0] << ',' << counts[1] << ',' << counts[2]
+                   << '\n';
         }
 
         const HidCalibrationProfile profile = fit_adaptive_hid_calibration(
@@ -931,7 +998,7 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
             output << "tuned_config_skipped=adaptive_profile_is_startup_memory_only"
                    << " requested_path=" << options.calibration_config_output_path << '\n';
         }
-        if (!profile.valid) {
+        if (!valid_hid_calibration_profile(profile)) {
             std::ostringstream message;
             message << "HID calibration rejected: quality=" << profile.quality
                     << " noise_px=" << profile.noise_px
