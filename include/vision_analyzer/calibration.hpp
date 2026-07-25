@@ -43,6 +43,8 @@ struct CalibrationRoundTripMeasurement {
 constexpr int kCalibrationProbeMinimumCounts = 8;
 constexpr int kCalibrationProbeMaximumCounts = 2048;
 constexpr int kCalibrationDiscoveryMaximumAttempts = 8;
+constexpr int kCalibrationProbeMeasurementsPerCount = 3;
+constexpr int kCalibrationDiscoverySweeps = 2;
 constexpr int kCalibrationRuntimeMaxStep = 120;
 constexpr double kCalibrationMinimumPhaseResponse = 0.15;
 
@@ -71,7 +73,8 @@ struct CalibrationRoundTripCommand {
     int outward_counts = 0;
 };
 
-using CalibrationProbeMeasure = std::function<VisualShiftEstimate(int)>;
+using CalibrationProbeMeasure = std::function<CalibrationRoundTripMeasurement(int)>;
+using CalibrationDiscoveryPause = std::function<void()>;
 
 struct CalibrationFit {
     bool valid = false;
@@ -143,7 +146,8 @@ make_calibration_round_trip_samples(
     double minimum_discovery_shift_px,
     double minimum_measurable_shift_px,
     double maximum_reliable_shift_px,
-    const CalibrationProbeMeasure& measure
+    const CalibrationProbeMeasure& measure,
+    const CalibrationDiscoveryPause& between_sweeps = {}
 );
 [[nodiscard]] CalibrationFit fit_hid_calibration(
     const std::vector<CalibrationSample>& samples,

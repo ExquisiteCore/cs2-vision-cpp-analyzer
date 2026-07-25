@@ -468,57 +468,95 @@ CalibrationAxisDiscovery discover_calibration_axis(
     double minimum_discovery_shift_px,
     double minimum_measurable_shift_px,
     double maximum_reliable_shift_px,
-    const CalibrationProbeMeasure& measure
+    const CalibrationProbeMeasure& measure,
+    const CalibrationDiscoveryPause& between_sweeps
 ) {
     if (axis > 1 || !measure) {
         throw std::invalid_argument("invalid HID calibration discovery axis or callback");
     }
 
-    int counts = 16;
-    std::array<int, kCalibrationDiscoveryMaximumAttempts> attempted{};
-    for (int attempt = 0; attempt < kCalibrationDiscoveryMaximumAttempts; ++attempt) {
-        if (std::find(attempted.begin(), attempted.begin() + attempt, counts) !=
-            attempted.begin() + attempt) {
-            throw std::runtime_error("HID calibration discovery repeated a probe count");
-        }
-        attempted[attempt] = counts;
+    for (int sweep = 0; sweep < kCalibrationDiscoverySweeps; ++sweep) {
+        int counts = 16;
+        for (int attempt = 0; attempt < kCalibrationDiscoveryMaximumAttempts; ++attempt) {
+            bool planning_estimate_available = false;
+            VisualShiftEstimate planning_estimate{{0.0, 0.0}, 0.0, false};
+            double planning_main_shift = 0.0;
 
-        const VisualShiftEstimate estimate = measure(counts);
-        const double main_shift_px = std::abs(axis == 0 ? estimate.shift.x : estimate.shift.y);
-        const double cross_shift_px = std::abs(axis == 0 ? estimate.shift.y : estimate.shift.x);
-        const CalibrationProbePlan plan = plan_calibration_probe(
-            counts,
-            attempt,
-            main_shift_px,
-            cross_shift_px,
-            estimate.response,
-            minimum_discovery_shift_px,
-            maximum_reliable_shift_px
-        );
-        if (plan.accepted) {
-            const double counts_per_pixel = static_cast<double>(counts) / main_shift_px;
-            return CalibrationAxisDiscovery{
-                counts,
-                main_shift_px,
-                counts_per_pixel,
-                derive_calibration_level_plan(
-                    counts_per_pixel,
-                    minimum_measurable_shift_px
-                ),
-            };
+            for (int repeat = 0;
+                 repeat < kCalibrationProbeMeasurementsPerCount;
+                 ++repeat) {
+                const CalibrationRoundTripMeasurement measurement = measure(counts);
+                const VisualShiftEstimate& estimate = measurement.outward;
+                const double main_shift_px =
+                    std::abs(axis == 0 ? estimate.shift.x : estimate.shift.y);
+                const double cross_shift_px =
+                    std::abs(axis == 0 ? estimate.shift.y : estimate.shift.x);
+                const bool finite = std::isfinite(estimate.shift.x) &&
+                                    std::isfinite(estimate.shift.y) &&
+                                    std::isfinite(estimate.response);
+                const bool reliable_direction = finite && estimate.coherent &&
+                    estimate.response >= kCalibrationMinimumPhaseResponse &&
+                    cross_shift_px <= main_shift_px * 0.35 &&
+                    main_shift_px <= maximum_reliable_shift_px;
+                if (reliable_direction &&
+                    main_shift_px >= minimum_discovery_shift_px) {
+                    const double counts_per_pixel =
+                        static_cast<double>(counts) / main_shift_px;
+                    return CalibrationAxisDiscovery{
+                        counts,
+                        main_shift_px,
+                        counts_per_pixel,
+                        derive_calibration_level_plan(
+                            counts_per_pixel,
+                            minimum_measurable_shift_px
+                        ),
+                    };
+                }
+                if (reliable_direction &&
+                    (!planning_estimate_available ||
+                     estimate.response > planning_estimate.response)) {
+                    planning_estimate = estimate;
+                    planning_main_shift = main_shift_px;
+                    planning_estimate_available = true;
+                }
+            }
+
+            if (attempt + 1 >= kCalibrationDiscoveryMaximumAttempts ||
+                counts >= kCalibrationProbeMaximumCounts) {
+                break;
+            }
+
+            int next_counts = std::min(
+                counts * 2,
+                kCalibrationProbeMaximumCounts
+            );
+            if (planning_estimate_available && planning_main_shift >= 0.5) {
+                const int scaled = adjust_calibration_probe_count(
+                    counts,
+                    planning_main_shift,
+                    8.0,
+                    kCalibrationProbeMaximumCounts
+                );
+                next_counts = std::clamp(
+                    std::max(counts + 1, scaled),
+                    kCalibrationProbeMinimumCounts,
+                    kCalibrationProbeMaximumCounts
+                );
+            }
+            counts = next_counts;
         }
-        if (plan.exhausted) {
-            std::ostringstream message;
-            message << "HID calibration discovery exhausted: axis="
-                    << (axis == 0 ? 'x' : 'y')
-                    << " max_counts=" << kCalibrationProbeMaximumCounts
-                    << " shift_px=" << main_shift_px
-                    << " response=" << estimate.response;
-            throw std::runtime_error(message.str());
+        if (sweep + 1 < kCalibrationDiscoverySweeps && between_sweeps) {
+            between_sweeps();
         }
-        counts = plan.next_counts;
     }
-    throw std::runtime_error("HID calibration discovery exhausted its attempt budget");
+
+    std::ostringstream message;
+    message << "HID calibration input not ready: axis="
+            << (axis == 0 ? 'x' : 'y')
+            << " no coherent visual movement through "
+            << kCalibrationProbeMaximumCounts
+            << " counts";
+    throw std::runtime_error(message.str());
 }
 
 std::vector<CalibrationRoundTripCommand> plan_calibration_round_trip_commands(
@@ -629,7 +667,7 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                     "failed to capture returned DXGI frame after HID calibration probe"
                 );
                 const CalibrationRoundTripMeasurement measurement =
-                    estimate_calibration_round_trip(
+                    estimate_robust_calibration_round_trip(
                         baseline.image,
                         moved.image,
                         returned.image
@@ -669,12 +707,14 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
             CapturedFrame still = capture(
                 "failed to capture still DXGI frame for HID calibration"
             );
-            const VisualShiftEstimate estimate = estimate_visual_shift_with_response(
+            const VisualShiftEstimate estimate = estimate_robust_visual_shift(
                 baseline.image,
                 still.image
             );
             samples.push_back({0, 0, estimate.shift, estimate.response, -1});
-            if (std::isfinite(estimate.shift.x) && std::isfinite(estimate.shift.y)) {
+            if (estimate.coherent &&
+                std::isfinite(estimate.shift.x) &&
+                std::isfinite(estimate.shift.y)) {
                 noise_values.push_back(cv::norm(estimate.shift));
             }
             output << "sample"
@@ -684,6 +724,7 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                    << " visual_shift_x=" << estimate.shift.x
                    << " visual_shift_y=" << estimate.shift.y
                    << " response=" << estimate.response
+                   << " coherent=" << (estimate.coherent ? 1 : 0)
                    << '\n';
             baseline = std::move(still);
         }
@@ -717,9 +758,12 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                            << " counts=" << counts
                            << " shift_px=" << main
                            << " cross_px=" << cross
-                           << " response=" << estimate.response << '\n';
-                    return estimate;
-                }
+                           << " response=" << estimate.response
+                           << " coherent=" << (estimate.coherent ? 1 : 0)
+                           << '\n';
+                    return measurement;
+                },
+                wait_for_settle
             );
             const auto& counts = discoveries[axis].levels.counts;
             output << "probe_levels axis=" << (axis == 0 ? 'x' : 'y')

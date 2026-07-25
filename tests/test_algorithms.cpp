@@ -793,14 +793,44 @@ void test_calibration_axis_discovery_derives_low_sensitivity_levels() {
         270.0,
         [&](int counts) {
             attempted.push_back(counts);
-            return VisualShiftEstimate{{-static_cast<double>(counts) / 60.0, 0.05}, 0.90};
+            return CalibrationRoundTripMeasurement{
+                {{-static_cast<double>(counts) / 60.0, 0.05}, 0.90, true},
+                {{static_cast<double>(counts) / 60.0, -0.05}, 0.90, true},
+            };
         }
     );
-    require(attempted == std::vector<int>({16, 32, 480}),
-            "subpixel signal should double before using proportional probe scaling");
+    require(attempted == std::vector<int>({16, 16, 16, 32, 32, 32, 480}),
+            "subpixel signal should be sampled three times before bounded scaling");
     require(discovery.probe_counts == 480, "discovery should retain the accepted count");
     require(discovery.levels.counts == std::array<int, 3>{480, 1024, 2048},
             "discovery should derive compressed low-sensitivity levels");
+}
+
+void test_calibration_axis_discovery_retries_same_count_before_escalating() {
+    std::vector<int> attempted;
+    const CalibrationAxisDiscovery discovery = discover_calibration_axis(
+        0,
+        4.0,
+        1.5,
+        270.0,
+        [&](int counts) {
+            attempted.push_back(counts);
+            if (attempted.size() == 1) {
+                return CalibrationRoundTripMeasurement{
+                    {{0.0, 0.0}, 0.0, false},
+                    {{0.0, 0.0}, 0.0, false},
+                };
+            }
+            return CalibrationRoundTripMeasurement{
+                {{-8.0, 0.1}, 0.80, true},
+                {{8.1, -0.1}, 0.80, true},
+            };
+        }
+    );
+    require(discovery.probe_counts == 16,
+            "second coherent measurement should accept the original count");
+    require(attempted == std::vector<int>({16, 16}),
+            "discovery should retry the same balanced count before escalating");
 }
 
 void test_calibration_axis_discovery_reports_probe_exhaustion() {
@@ -814,16 +844,42 @@ void test_calibration_axis_discovery_reports_probe_exhaustion() {
             270.0,
             [&](int counts) {
                 attempted.push_back(counts);
-                return VisualShiftEstimate{{0.0, 0.0}, 0.0};
+                return CalibrationRoundTripMeasurement{
+                    {{0.0, 0.0}, 0.0, false},
+                    {{0.0, 0.0}, 0.0, false},
+                };
             }
         );
     } catch (const std::runtime_error& error) {
-        rejected = std::string(error.what()).find("axis=x") != std::string::npos &&
-                   std::string(error.what()).find("2048") != std::string::npos;
+        rejected = std::string(error.what()).find(
+            "HID calibration input not ready: axis=x "
+            "no coherent visual movement through 2048 counts"
+        ) != std::string::npos;
     }
-    require(rejected, "exhaustion must report the axis and calibration limit");
-    require(!attempted.empty() && attempted.back() == 2048,
-            "discovery should test the agreed limit before rejecting");
+    require(rejected, "two-sweep exhaustion must report input-not-ready explicitly");
+    require(attempted.size() ==
+                static_cast<std::size_t>(
+                    2 * kCalibrationDiscoveryMaximumAttempts *
+                    kCalibrationProbeMeasurementsPerCount
+                ),
+            "discovery should use three measurements per count for two sweeps");
+    const std::array<int, 8> ladder = {16, 32, 64, 128, 256, 512, 1024, 2048};
+    for (int sweep = 0; sweep < kCalibrationDiscoverySweeps; ++sweep) {
+        for (std::size_t level = 0; level < ladder.size(); ++level) {
+            for (int repeat = 0; repeat < kCalibrationProbeMeasurementsPerCount; ++repeat) {
+                const std::size_t index = static_cast<std::size_t>(
+                    sweep * static_cast<int>(ladder.size()) *
+                        kCalibrationProbeMeasurementsPerCount +
+                    static_cast<int>(level) * kCalibrationProbeMeasurementsPerCount +
+                    repeat
+                );
+                require(attempted[index] == ladder[level],
+                        "input-not-ready discovery should follow the bounded ladder twice");
+            }
+        }
+    }
+    require(kCalibrationRuntimeMaxStep == 120,
+            "discovery retries must not change the runtime movement clamp");
 }
 
 void test_round_trip_estimation_measures_outward_and_inverse_frames() {
@@ -1620,6 +1676,7 @@ int main() {
         test_calibration_probe_planner_escalates_low_response();
         test_calibration_probe_planner_accepts_signal_and_rejects_cross_axis();
         test_calibration_axis_discovery_derives_low_sensitivity_levels();
+        test_calibration_axis_discovery_retries_same_count_before_escalating();
         test_calibration_axis_discovery_reports_probe_exhaustion();
         test_round_trip_estimation_measures_outward_and_inverse_frames();
         test_round_trip_command_plan_alternates_without_final_escalation();
