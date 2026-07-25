@@ -5,10 +5,21 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "vision_analyzer/aim_controller.hpp"
 
 namespace vision_analyzer {
+
+struct HidDeviceHealth {
+    std::uint8_t protocol_version = 0;
+    std::uint16_t capabilities = 0;
+};
+
+[[nodiscard]] HidDeviceHealth parse_rp2350_v2_health(
+    const std::vector<std::uint8_t>& info,
+    const std::vector<std::uint8_t>& caps
+);
 
 class HidClient {
 public:

@@ -9,13 +9,30 @@
 namespace vision_analyzer {
 namespace {
 
+constexpr std::uint8_t kRp2350ProtocolV2 = 2;
+constexpr std::uint16_t kRp2350RequiredCapabilities = 0x0072;
+constexpr const char* kRp2350ProtocolV2Error =
+    "RP2350 protocol v2 capabilities are required";
+
 #if defined(VISION_ANALYZER_WITH_RP2350_HID) && defined(_WIN32)
+static_assert(
+    rp2350_hid_bridge::PROTOCOL_VERSION == kRp2350ProtocolV2,
+    "RP2350 HID SDK protocol v2 is required"
+);
+
+rp2350_hid_bridge::HidBridgeOptions make_bridge_options(const std::string& port) {
+    rp2350_hid_bridge::HidBridgeOptions options;
+    options.port = port;
+    return options;
+}
+
 class Rp2350HidClient final : public HidClient {
 public:
     explicit Rp2350HidClient(const std::string& port)
-        : bridge_(port) {
+        : bridge_(make_bridge_options(port)) {
         bridge_.open();
         bridge_.ping();
+        (void)parse_rp2350_v2_health(bridge_.info(), bridge_.caps());
     }
 
     ~Rp2350HidClient() override {
@@ -43,6 +60,26 @@ private:
 #endif
 
 }  // namespace
+
+HidDeviceHealth parse_rp2350_v2_health(
+    const std::vector<std::uint8_t>& info,
+    const std::vector<std::uint8_t>& caps
+) {
+    if (info.size() < 4 || caps.size() < 5 ||
+        info[0] != kRp2350ProtocolV2 || caps[0] != kRp2350ProtocolV2) {
+        throw std::runtime_error(kRp2350ProtocolV2Error);
+    }
+
+    const auto capabilities = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(caps[3]) << 8) |
+        static_cast<std::uint16_t>(caps[4])
+    );
+    if ((capabilities & kRp2350RequiredCapabilities) != kRp2350RequiredCapabilities) {
+        throw std::runtime_error(kRp2350ProtocolV2Error);
+    }
+
+    return HidDeviceHealth{kRp2350ProtocolV2, capabilities};
+}
 
 HidActionSender::HidActionSender(HidClient& client)
     : client_(client) {}

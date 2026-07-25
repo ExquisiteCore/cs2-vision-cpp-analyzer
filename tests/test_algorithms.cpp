@@ -961,6 +961,36 @@ void test_fire_cooldown_and_disable_reset() {
     require(controller.plan(report).click_left, "disabling fire should clear cooldown");
 }
 
+void test_rp2350_v2_health_accepts_required_capabilities() {
+    const std::vector<std::uint8_t> info{2, 0, 240, 3};
+    const std::vector<std::uint8_t> caps{2, 0, 240, 0, 0x7F, 1, 1, 0, 8, 20};
+    const HidDeviceHealth health = parse_rp2350_v2_health(info, caps);
+
+    require(health.protocol_version == 2, "health must report protocol v2");
+    require(health.capabilities == 0x7F, "health must preserve capability bits");
+}
+
+void test_rp2350_v2_health_rejects_legacy_or_incomplete_devices() {
+    bool rejected_legacy = false;
+    try {
+        (void)parse_rp2350_v2_health({1, 0, 240, 3}, {1, 0, 240, 0, 0x0F});
+    } catch (const std::runtime_error& error) {
+        rejected_legacy = std::string(error.what()).find("protocol v2") != std::string::npos;
+    }
+    require(rejected_legacy, "legacy firmware must be rejected with a v2 error");
+
+    bool rejected_caps = false;
+    try {
+        (void)parse_rp2350_v2_health({2, 0, 240, 3}, {2, 0, 240, 0, 0x02});
+    } catch (const std::runtime_error&) {
+        rejected_caps = true;
+    }
+    require(
+        rejected_caps,
+        "firmware without retry, lease, and cancellation must be rejected"
+    );
+}
+
 class RecordingHidClient final : public HidClient {
 public:
     void move_relative(std::int16_t dx, std::int16_t dy) override {
@@ -1113,6 +1143,8 @@ int main() {
         test_body_does_not_fire_outside_torso_region();
         test_fire_policy_enforces_body_flag_and_class_confidence();
         test_fire_cooldown_and_disable_reset();
+        test_rp2350_v2_health_accepts_required_capabilities();
+        test_rp2350_v2_health_rejects_legacy_or_incomplete_devices();
         test_hid_action_sender_requires_arming_and_stops_when_disarmed();
         test_runtime_session_starts_closed();
         test_runtime_status_includes_parseable_timing_metrics();
