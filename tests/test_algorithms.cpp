@@ -715,6 +715,18 @@ void test_adaptive_calibration_fits_signed_axes_and_inverted_y() {
             "nonlinear samples should preserve a large-step gain");
 }
 
+void test_adaptive_calibration_ignores_incoherent_noise_measurements() {
+    auto samples = make_valid_adaptive_calibration_samples();
+    samples.push_back({0, 0, {500.0, -500.0}, 0.0, -1});
+
+    const auto profile = fit_adaptive_hid_calibration(samples, {1920, 1080}, 120);
+
+    require(profile.valid,
+            "low-response noise measurement should not reject valid movement curves");
+    require(profile.noise_px < 1.0F,
+            "low-response noise measurement should not inflate the fitted deadzone");
+}
+
 void test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion() {
     auto samples = make_valid_adaptive_calibration_samples();
     for (auto& sample : samples) {
@@ -1887,6 +1899,7 @@ int main() {
         test_aim_controller_deadzone_suppresses_tiny_steps();
         test_hid_calibration_fit_generates_tuning_values();
         test_adaptive_calibration_fits_signed_axes_and_inverted_y();
+        test_adaptive_calibration_ignores_incoherent_noise_measurements();
         test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion();
         test_calibration_probe_adjustment_uses_calibration_only_limit();
         test_calibration_level_plan_compresses_low_sensitivity_range();

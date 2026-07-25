@@ -63,8 +63,12 @@ CalibrationFit fit_hid_calibration(
 
     for (const auto& sample : samples) {
         if (sample.counts_dx == 0 && sample.counts_dy == 0) {
-            noise_values.push_back(cv::norm(sample.visual_shift));
-            ++noise_samples;
+            if (finite_point(sample.visual_shift) &&
+                std::isfinite(sample.phase_response) &&
+                sample.phase_response >= kCalibrationMinimumPhaseResponse) {
+                noise_values.push_back(cv::norm(sample.visual_shift));
+                ++noise_samples;
+            }
             continue;
         }
 
@@ -118,7 +122,10 @@ HidCalibrationProfile fit_adaptive_hid_calibration(
 
     std::vector<double> noise_values;
     for (const auto& sample : samples) {
-        if (sample.counts_dx == 0 && sample.counts_dy == 0 && finite_point(sample.visual_shift)) {
+        if (sample.counts_dx == 0 && sample.counts_dy == 0 &&
+            finite_point(sample.visual_shift) &&
+            std::isfinite(sample.phase_response) &&
+            sample.phase_response >= kCalibrationMinimumPhaseResponse) {
             noise_values.push_back(cv::norm(sample.visual_shift));
         }
     }
