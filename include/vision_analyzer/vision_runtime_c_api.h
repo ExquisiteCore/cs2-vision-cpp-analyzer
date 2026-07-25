@@ -76,6 +76,14 @@ VA_API int32_t va_set_fire_policy(
 );
 VA_API int32_t va_set_hid_click(VaRuntime* runtime, int32_t enabled, int32_t cooldown_frames);
 VA_API int32_t va_set_hid_tuning(VaRuntime* runtime, float gain, int32_t max_step, float deadzone_px);
+VA_API int32_t va_set_hid_calibration_path(
+    VaRuntime* runtime,
+    const char* calibration_path
+);
+VA_API int32_t va_get_hid_calibration(
+    VaRuntime* runtime,
+    VaHidCalibrationProfile* profile
+);
 VA_API int32_t va_set_thresholds(VaRuntime* runtime, float confidence, float nms_threshold);
 VA_API int32_t va_set_dxgi_roi(VaRuntime* runtime, int32_t x, int32_t y, int32_t width, int32_t height);
 VA_API int32_t va_set_frame_limits(VaRuntime* runtime, int32_t max_frames, int32_t warmup_frames);

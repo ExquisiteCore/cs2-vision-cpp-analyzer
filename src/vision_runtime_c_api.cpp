@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <filesystem>
 #include <functional>
 #include <stdexcept>
 #include <string>
 
 #include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/detector.hpp"
+#include "vision_analyzer/hid_calibration_store.hpp"
 #include "vision_analyzer/runtime.hpp"
 #include "vision_analyzer/runtime_config.hpp"
 #include "vision_analyzer/runtime_session.hpp"
@@ -16,6 +18,7 @@
 struct VaRuntime {
     vision_analyzer::Options options;
     vision_analyzer::RuntimeSession session;
+    std::filesystem::path hid_calibration_path;
     std::string last_error;
 };
 
@@ -258,6 +261,44 @@ int32_t va_set_hid_tuning(VaRuntime* runtime, float gain, int32_t max_step, floa
     });
 }
 
+int32_t va_set_hid_calibration_path(
+    VaRuntime* runtime,
+    const char* calibration_path
+) {
+    return call_api(runtime, [&] {
+        const std::filesystem::path candidate_path = required_string(
+            calibration_path,
+            "HID calibration path"
+        );
+        if (std::filesystem::exists(candidate_path)) {
+            const vision_analyzer::HidCalibrationProfile candidate_profile =
+                vision_analyzer::load_hid_calibration_profile(candidate_path);
+            runtime->hid_calibration_path = candidate_path;
+            runtime->options.hid_calibration = candidate_profile;
+            return;
+        }
+        runtime->hid_calibration_path = candidate_path;
+        runtime->options.hid_calibration.reset();
+    });
+}
+
+int32_t va_get_hid_calibration(
+    VaRuntime* runtime,
+    VaHidCalibrationProfile* profile
+) {
+    if (profile != nullptr) {
+        *profile = VaHidCalibrationProfile{};
+    }
+    return call_api(runtime, [&] {
+        if (profile == nullptr) {
+            throw std::runtime_error("calibration profile output pointer is null");
+        }
+        if (runtime->options.hid_calibration.has_value()) {
+            fill_calibration_profile(*runtime->options.hid_calibration, profile);
+        }
+    });
+}
+
 int32_t va_set_thresholds(VaRuntime* runtime, float confidence, float nms_threshold) {
     return call_api(runtime, [&] {
         runtime->options.confidence = confidence;
@@ -335,8 +376,14 @@ int32_t va_calibrate_hid(
         vision_analyzer::validate_options(calibration_options);
         const vision_analyzer::HidCalibrationProfile fitted =
             vision_analyzer::run_hid_calibration(calibration_options);
-        if (!fitted.valid) {
+        if (!vision_analyzer::valid_hid_calibration_profile(fitted)) {
             throw std::runtime_error("HID calibration returned an invalid profile");
+        }
+        if (!runtime->hid_calibration_path.empty()) {
+            vision_analyzer::save_hid_calibration_profile_atomic(
+                runtime->hid_calibration_path,
+                fitted
+            );
         }
         runtime->options.hid_calibration = fitted;
         fill_calibration_profile(fitted, profile);

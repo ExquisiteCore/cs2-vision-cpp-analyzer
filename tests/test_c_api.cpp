@@ -1,4 +1,6 @@
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 
@@ -13,6 +15,29 @@ void require(bool condition, const char* message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+std::filesystem::path c_api_calibration_test_directory() {
+    return std::filesystem::temp_directory_path() /
+           "vision-runtime-c-api-calibration-tests";
+}
+
+void write_valid_calibration_json(const std::filesystem::path& path) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << "{\n"
+           << "  \"schema_version\": 1,\n"
+           << "  \"frame_width\": 1920,\n"
+           << "  \"frame_height\": 1080,\n"
+           << "  \"x_shift_px\": [8.05, 23.53, 46.58],\n"
+           << "  \"x_counts_per_pixel\": [1.37, 1.40, 1.42],\n"
+           << "  \"y_shift_px\": [7.93, 24.20, 47.15],\n"
+           << "  \"y_counts_per_pixel\": [1.39, 1.41, 1.42],\n"
+           << "  \"deadzone_px\": 1.0,\n"
+           << "  \"max_step\": 120,\n"
+           << "  \"noise_px\": 0.009,\n"
+           << "  \"quality\": 0.678,\n"
+           << "  \"accepted_samples\": 24\n"
+           << "}\n";
 }
 
 void test_create_destroy() {
@@ -77,6 +102,88 @@ void test_fire_and_calibration_api_validation() {
     va_destroy(runtime);
 }
 
+void test_calibration_path_api_validates_pointers() {
+    VaHidCalibrationProfile profile{};
+    require(va_set_hid_calibration_path(nullptr, "profile.json") == -1,
+            "null runtime path setter should fail");
+    require(va_get_hid_calibration(nullptr, &profile) == -1,
+            "null runtime calibration getter should fail");
+
+    VaRuntime* runtime = va_create();
+    require(runtime != nullptr, "runtime should exist");
+    require(va_set_hid_calibration_path(runtime, nullptr) == -1,
+            "null calibration path should fail");
+    require(va_set_hid_calibration_path(runtime, "") == -1,
+            "empty calibration path should fail");
+    require(va_get_hid_calibration(runtime, nullptr) == -1,
+            "null calibration output should fail");
+    require(std::strstr(va_last_error(runtime), "pointer") != nullptr,
+            "null calibration output should explain the pointer error");
+    va_destroy(runtime);
+}
+
+void test_calibration_getter_zeroes_output_when_no_profile_is_installed() {
+    VaRuntime* runtime = va_create();
+    require(runtime != nullptr, "runtime should exist");
+    VaHidCalibrationProfile profile;
+    std::memset(&profile, 0x7F, sizeof(profile));
+
+    require(va_get_hid_calibration(runtime, &profile) == 0,
+            "empty calibration getter should succeed");
+    require(profile.schema_version == 0 && profile.valid == 0 &&
+            profile.frame_width == 0 && profile.max_step == 0,
+            "empty calibration getter should zero-initialize the output");
+    va_destroy(runtime);
+}
+
+void test_calibration_path_load_and_get_are_transactional() {
+    const auto directory = c_api_calibration_test_directory();
+    std::filesystem::remove_all(directory);
+    std::filesystem::create_directories(directory);
+    const auto valid_path = directory / "valid.json";
+    write_valid_calibration_json(valid_path);
+
+    VaRuntime* runtime = va_create();
+    require(runtime != nullptr, "runtime should exist");
+    require(va_set_hid_calibration_path(runtime, valid_path.string().c_str()) == 0,
+            "valid calibration path should load");
+
+    VaHidCalibrationProfile profile{};
+    require(va_get_hid_calibration(runtime, &profile) == 0 && profile.valid == 1,
+            "loaded calibration should be installed");
+    require(profile.schema_version == 1 && profile.frame_width == 1920 &&
+            profile.frame_height == 1080 && profile.max_step == 120 &&
+            profile.accepted_samples == 24,
+            "getter should expose the complete loaded profile");
+
+    const auto corrupt_path = directory / "corrupt.json";
+    {
+        std::ofstream output(corrupt_path, std::ios::binary | std::ios::trunc);
+        output << "{broken";
+    }
+    require(va_set_hid_calibration_path(runtime, corrupt_path.string().c_str()) == -1,
+            "corrupt calibration path should fail");
+    std::memset(&profile, 0, sizeof(profile));
+    require(va_get_hid_calibration(runtime, &profile) == 0 && profile.valid == 1,
+            "corrupt path selection should retain the old installed profile");
+    require(profile.frame_width == 1920 && profile.max_step == 120,
+            "retained profile should remain complete");
+
+    const auto missing_path = directory / "new-profile.json";
+    require(!std::filesystem::exists(missing_path),
+            "new calibration destination should begin missing");
+    require(va_set_hid_calibration_path(runtime, missing_path.string().c_str()) == 0,
+            "missing calibration destination should be accepted");
+    std::memset(&profile, 0x7F, sizeof(profile));
+    require(va_get_hid_calibration(runtime, &profile) == 0 && profile.valid == 0,
+            "selecting a missing destination should clear the old profile");
+    require(profile.schema_version == 0 && profile.frame_width == 0,
+            "cleared profile output should be fully zeroed");
+
+    va_destroy(runtime);
+    std::filesystem::remove_all(directory);
+}
+
 void test_process_before_open_reports_error() {
     VaRuntime* runtime = va_create();
     require(runtime != nullptr, "va_create should return a runtime handle");
@@ -108,6 +215,9 @@ int main() {
         test_setters_accept_valid_values();
         test_tensorrt_cache_setter_rejects_empty_path();
         test_fire_and_calibration_api_validation();
+        test_calibration_path_api_validates_pointers();
+        test_calibration_getter_zeroes_output_when_no_profile_is_installed();
+        test_calibration_path_load_and_get_are_transactional();
         test_process_before_open_reports_error();
         test_invalid_video_open_reports_error();
         std::cout << "C API tests passed\n";
