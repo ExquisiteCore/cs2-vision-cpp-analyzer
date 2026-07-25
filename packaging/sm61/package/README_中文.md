@@ -22,7 +22,7 @@ CUDA Toolkit。546.33 驱动足以加载本包的 CUDA 11.8 私有运行库。
 4. 脚本随后第二次打开模型，用于确认缓存可以复用。
 5. 看到 `PASS` 后，把 `logs` 中的结果保留用于 FPS 对比。
 
-一键测试始终使用 dry-run，配置中的 `output_enabled=false` 也不会被脚本覆盖，
+一键测试始终使用试运行模式，配置中的 `output_enabled=false` 也不会被脚本覆盖，
 因此不会向 RP2350 发送移动或点击。
 
 ## 单独测试当前屏幕
@@ -34,7 +34,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\test-dxgi.ps1 
 ```
 
 脚本会先列出并探测显示输出。如果输出 0 不支持 Desktop Duplication，请根据
-日志显示的 adapter/output 改参数。DXGI 测试同样不会向 RP2350 输出。
+日志显示的适配器/输出修改参数。DXGI 测试同样不会向 RP2350 输出。
 
 ## 日志和缓存
 
@@ -86,5 +86,5 @@ python .\examples\runtime_live_move.py --hid-port COM3 --player-side ct --enable
 加载包内 CUDA 11.8、cuDNN 8.9、TensorRT 8.6.1.6 和 MSVC 私有运行库，不需要
 修改系统 PATH。按 `Ctrl+C` 会通过 `finally` 撤销开火和移动输出。
 
-`一键检查并测试.cmd` 始终只做安全 dry-run，与上述真实 Python 会话是两条独立
+`一键检查并测试.cmd` 始终只做安全试运行，与上述真实 Python 会话是两条独立
 路径，不会自动开始标定或武装输出。

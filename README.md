@@ -1,46 +1,44 @@
-# CS2 Vision C++ Runtime
+# CS2 Vision C++ 运行时
 
-This repository contains the C++ runtime side of the CS2 vision project. The
-Python project trains and exports YOLO models. This runtime loads the exported
-model, reads frames from a video file or DXGI Desktop Duplication, detects
-targets, fuses body/head detections, tracks the selected target, filters and
-predicts the aim point, then plans bounded relative mouse movement through the
-RP2350 HID bridge SDK.
+本仓库包含 CS2 视觉项目的 C++ 运行时。Python 项目负责训练和导出 YOLO 模型；本运行时
+加载导出的模型，从视频文件或 DXGI 桌面复制读取画面，检测目标，融合身体/头部检测结果，
+跟踪选中的目标，对瞄准点进行滤波和预测，最后通过 RP2350 HID 桥接器 SDK 规划有边界的
+相对鼠标移动。
 
-The primary product is `vision_runtime.dll`, which exposes the stable C API in
-`include/vision_analyzer/vision_runtime_c_api.h`. `vision_analyzer.exe` is an
-optional diagnostic CLI for model, video, DXGI, calibration, and end-to-end
-runtime validation. No graphical UI is built or required.
+主要产物是 `vision_runtime.dll`，它导出
+`include/vision_analyzer/vision_runtime_c_api.h` 中声明的稳定 C API。
+`vision_analyzer.exe` 是可选的诊断 CLI，用于验证模型、视频、DXGI、标定和端到端运行时。
+项目不构建图形界面，也不依赖图形界面。
 
-Build artifacts:
+构建产物：
 
 ```text
-vision_runtime.dll  primary runtime library and C API implementation
-vision_runtime.lib  MSVC import library for native consumers
-vision_analyzer.exe optional diagnostic CLI
+vision_runtime.dll  主要运行时库和 C API 实现
+vision_runtime.lib  供原生调用方使用的 MSVC 导入库
+vision_analyzer.exe 可选诊断 CLI
 ```
 
-## Requirements
+## 环境要求
 
-Windows build requirements:
+Windows 构建环境：
 
 ```text
 Visual Studio 2022 Build Tools with MSVC
 xmake
-CMake 3.14+ (when using the CMake build)
+CMake 3.14+（使用 CMake 构建时）
 Git
 ```
 
-Runtime/model requirements:
+运行时和模型要求：
 
 ```text
-OpenCV DNN, provided by xmake package resolution
-Exported YOLO ONNX model
-Matching *.schema.json file for live HID mode
-RP2350 HID Bridge C++ SDK for real HID output
+OpenCV DNN，由 xmake 解析依赖
+导出的 YOLO ONNX 模型
+实时 HID 模式需要匹配的 *.schema.json 文件
+真实 HID 输出需要 RP2350 HID Bridge C++ SDK
 ```
 
-GTX 1080 Ti production acceleration target:
+GTX 1080 Ti 生产加速环境：
 
 ```text
 ONNX Runtime GPU 1.17.x
@@ -51,12 +49,12 @@ GeForce GTX 1080 Ti / SM 6.1
 FP32
 ```
 
-The default backend is `ort-tensorrt`. `opencv-onnx` remains available as an
-explicit CPU fallback when ONNX Runtime, CUDA, or TensorRT is unavailable.
+默认后端为 `ort-tensorrt`。ONNX Runtime、CUDA 或 TensorRT 不可用时，仍可明确指定
+`opencv-onnx` 作为 CPU 兜底后端。
 
-## Build with xmake
+## 使用 xmake 构建
 
-From this repository:
+在本仓库中执行：
 
 ```powershell
 xmake f -m release
@@ -65,7 +63,7 @@ xmake run vision_analyzer_tests
 xmake run vision_runtime_c_api_tests
 ```
 
-From the parent repository:
+在父仓库中执行：
 
 ```powershell
 cd tools\cpp_analyzer
@@ -75,15 +73,14 @@ xmake run vision_analyzer_tests
 xmake run vision_runtime_c_api_tests
 ```
 
-The parent repository layout is automatically supported. If the SDK is elsewhere,
-pass it explicitly:
+默认自动支持父仓库的目录布局。如果 SDK 位于其他位置，请显式传入路径：
 
 ```powershell
 xmake f -m release --hid_sdk_root=D:\project\cs2-vision-trainer\tools\rp2350_hid_bridge_cpp
 xmake
 ```
 
-Enable ONNX Runtime backends:
+启用 ONNX Runtime 后端：
 
 ```powershell
 $env:ONNXRUNTIME_ROOT = "D:\SDK\onnxruntime-win-x64-gpu"
@@ -91,12 +88,12 @@ xmake f -m release --onnxruntime_root=$env:ONNXRUNTIME_ROOT --hid_sdk_root=..\rp
 xmake
 ```
 
-## GTX 1080 Ti Production Runtime
+## GTX 1080 Ti 生产运行时
 
-Use matching versions in one process. Do not mix the production DLL directory
-with CUDA 12, cuDNN 9, TensorRT 11, or a newer ONNX Runtime provider DLL.
+同一进程内必须使用相互匹配的版本。不要把生产 DLL 目录与 CUDA 12、cuDNN 9、
+TensorRT 11 或更新的 ONNX Runtime Provider DLL 混用。
 
-One concrete directory layout is:
+一种可用的目录布局如下：
 
 ```text
 D:\runtime\sm61\onnxruntime-win-x64-gpu-1.17.3
@@ -105,7 +102,7 @@ D:\runtime\sm61\cudnn-8.9\bin
 C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.8\bin
 ```
 
-Configure only the process that builds/runs the production package:
+只为构建或运行生产包的当前进程配置环境：
 
 ```powershell
 $env:ONNXRUNTIME_ROOT='D:\runtime\sm61\onnxruntime-win-x64-gpu-1.17.3'
@@ -114,43 +111,39 @@ xmake f -c -m release --onnxruntime_root=$env:ONNXRUNTIME_ROOT
 xmake
 ```
 
-The first model open builds an FP32 engine in
-`ort-trt-cache-sm61-fp32` under the process working directory. Later opens
-reuse it. Clear that directory after changing the model, GPU, ONNX Runtime,
-TensorRT, CUDA, or cuDNN.
+第一次打开模型时，会在进程工作目录的 `ort-trt-cache-sm61-fp32` 中构建 FP32
+引擎，后续打开会复用该引擎。更换模型、GPU、ONNX Runtime、TensorRT、CUDA 或
+cuDNN 后，需要清空该目录。
 
-TensorRT 8.6 does not support the RTX 5060 (SM 12.0), so final provider and FPS
-validation must run on the GTX 1080 Ti host. The RTX 5060 development machine
-can still compile the source and run hardware-independent tests.
+TensorRT 8.6 不支持 RTX 5060（SM 12.0），因此最终的 Provider 和 FPS 验证必须在
+GTX 1080 Ti 主机上运行。RTX 5060 开发机仍可编译源码并运行与硬件无关的测试。
 
-Primary DLL outputs:
+主要 DLL 产物：
 
 ```text
 build\windows\x64\release\vision_runtime.dll
 build\windows\x64\release\vision_runtime.lib
 ```
 
-The optional diagnostic executable is generated under:
+可选诊断程序生成在：
 
 ```text
 build\windows\x64\release\vision_analyzer.exe
 ```
 
-To build only the reusable DLL and its API test:
+只构建可复用 DLL 及其 API 测试：
 
 ```powershell
 xmake build vision_runtime
 xmake run vision_runtime_c_api_tests
 ```
 
-Use `xmake run` when possible. It adds the configured ONNX Runtime `lib`
-directory to the process DLL search path. CUDA, cuDNN, and TensorRT still come
-from the matching process-specific `PATH` shown above.
+尽可能使用 `xmake run`。它会把配置的 ONNX Runtime `lib` 目录加入进程的 DLL
+搜索路径。CUDA、cuDNN 和 TensorRT 仍从上面为当前进程设置的匹配 `PATH` 中加载。
 
-## Build with CMake
+## 使用 CMake 构建
 
-The CMake build produces the same core library, DLL, CLI, and test targets and
-does not require any UI framework:
+CMake 会生成相同的核心库、DLL、CLI 和测试目标，并且不需要任何 UI 框架：
 
 ```powershell
 cmake -S . -B build-cmake -A x64
@@ -158,7 +151,7 @@ cmake --build build-cmake --config Release
 ctest --test-dir build-cmake -C Release --output-on-failure
 ```
 
-CMake outputs are generated under:
+CMake 产物生成在：
 
 ```text
 build-cmake\Release\vision_runtime.dll
@@ -166,13 +159,12 @@ build-cmake\Release\vision_runtime.lib
 build-cmake\Release\vision_analyzer.exe
 ```
 
-Set `ONNXRUNTIME_ROOT` or `RP2350_HID_BRIDGE_SDK` before configuring CMake when
-those optional integrations are installed outside the default sibling layout.
+如果这些可选组件没有安装在默认的同级目录中，请在配置 CMake 前设置
+`ONNXRUNTIME_ROOT` 或 `RP2350_HID_BRIDGE_SDK`。
 
-## Model Contract
+## 模型契约
 
-The runtime expects a YOLO ONNX model exported by the Python project. The class
-order must be:
+运行时要求使用 Python 项目导出的 YOLO ONNX 模型。类别顺序必须为：
 
 ```text
 0 ct_body
@@ -181,61 +173,56 @@ order must be:
 3 t_head
 ```
 
-Live HID output requires a schema JSON generated next to the ONNX file:
+实时 HID 输出要求 ONNX 文件旁存在生成的模型结构说明 JSON：
 
 ```text
 best.onnx
 best.onnx.schema.json
 ```
 
-Dry-run can continue without schema for quick input testing. Live mode treats a
-missing or mismatched schema as an error.
+为了快速测试输入，试运行可以在没有模型结构说明文件时继续。实时模式会把文件缺失或
+不匹配视为错误。
 
-## Verify Inputs
+## 验证输入
 
-Use absolute paths with `xmake run`; xmake may launch the binary from the build
-directory.
+使用 `xmake run` 时请传入绝对路径，因为 xmake 可能从构建目录启动程序。
 
-Verify a video file:
+验证视频文件：
 
 ```powershell
 xmake run vision_analyzer --video D:\project\cs2-vision-trainer\videos\02.mp4 --verify-input
 ```
 
-Expected output contains non-zero width, height, and RGB mean values.
+预期输出中的宽度、高度和 RGB 平均值均不为零。
 
-List and probe DXGI outputs:
+列出并探测 DXGI 输出：
 
 ```powershell
 xmake run vision_analyzer --list-dxgi-outputs
 xmake run vision_analyzer --probe-dxgi-outputs
 ```
 
-Verify one DXGI output:
+验证一个 DXGI 输出：
 
 ```powershell
 xmake run vision_analyzer --input dxgi --dxgi-adapter 0 --dxgi-output 0 --verify-input --dxgi-debug
 ```
 
-Choose the adapter/output where `duplicate_output=0x0`. On hybrid GPU systems,
-the valid output is usually the adapter that owns the physical monitor, not
-necessarily the high-performance GPU doing 3D rendering.
+请选择 `duplicate_output=0x0` 的适配器/输出。在混合 GPU 系统上，有效输出通常属于
+实际连接显示器的适配器，不一定是负责 3D 渲染的高性能 GPU。
 
-If needed, crop the live input before inference:
+如有需要，可在推理前裁剪实时输入：
 
 ```powershell
 --dxgi-roi X Y W H
 ```
 
-ROI coordinates are relative to the selected DXGI output. The target offset is
-measured from the ROI center. A configured ROI is copied into an ROI-sized
-D3D11 staging texture before CPU readback; the full desktop is not converted
-and cropped afterward.
+ROI 坐标相对于选中的 DXGI 输出，目标偏移量以 ROI 中心为基准。配置 ROI 后，程序会在
+CPU 回读前将其复制到与 ROI 同尺寸的 D3D11 暂存纹理中，而不是先转换整个桌面再裁剪。
 
-## Offline Dry-Run
+## 离线试运行
 
-Dry-run loads the model, runs detection and planning, but does not send HID
-commands:
+试运行会加载模型并执行检测和规划，但不会发送 HID 命令：
 
 ```powershell
 xmake run vision_analyzer `
@@ -249,33 +236,32 @@ xmake run vision_analyzer `
   --action-log actions.txt
 ```
 
-Action log columns:
+动作日志列：
 
 ```text
 frame timestamp_ms target dx dy click lock distance offset_x offset_y
 ```
 
-Interpretation:
+字段说明：
 
 ```text
-target=1  target selected
-dx/dy     planned relative mouse movement
-click=1   left click would be emitted; dry-run only logs it
-lock=1    target lock is stable enough for fire-candidate evaluation
+target=1  已选中目标
+dx/dy     规划的相对鼠标移动
+click=1   正常模式会发送左键；试运行只记录日志
+lock=1    目标锁定足够稳定，可以评估是否满足开火候选条件
 ```
 
-Body fallback detections can guide movement, but only head detections can become
-left-click candidates.
+身体兜底检测可以引导移动，但只有头部检测可以成为左键候选。
 
-## Live HID Mode
+## 实时 HID 模式
 
-First verify the board without loading a model:
+先在不加载模型的情况下验证板卡：
 
 ```powershell
 xmake run vision_analyzer --hid-port COM3 --test-hid-move 300 0
 ```
 
-Then run live DXGI movement without clicking:
+然后运行实时 DXGI 移动，但不点击：
 
 ```powershell
 xmake run vision_analyzer `
@@ -294,7 +280,7 @@ xmake run vision_analyzer `
   --preview
 ```
 
-Enable left-click output only after movement is calibrated:
+只有完成移动标定后才启用左键输出：
 
 ```powershell
 xmake run vision_analyzer `
@@ -312,29 +298,27 @@ xmake run vision_analyzer `
   --output-enabled
 ```
 
-Output is disabled by default. A DLL host calls
-`va_set_output_enabled(runtime, 1)` when its own hotkey/arming condition is
-active and calls `va_set_output_enabled(runtime, 0)` to stop output immediately.
-Detection and returned action values continue while output is disabled.
+输出默认关闭。DLL 宿主只在自身热键或武装条件生效时调用
+`va_set_output_enabled(runtime, 1)`，并通过 `va_set_output_enabled(runtime, 0)`
+立即停止输出。输出关闭期间，检测和动作返回值仍会继续更新。
 
-Live HID mode requires:
+实时 HID 模式要求使用：
 
 ```text
 --player-side ct
 ```
 
-or:
+或者：
 
 ```text
 --player-side t
 ```
 
-`unknown` is allowed for dry-run, but not for live HID output.
+试运行允许使用 `unknown`，实时 HID 输出则不允许。
 
-## HID Calibration
+## HID 标定
 
-Calibration sends controlled relative mouse moves through the board, observes
-the visual shift through DXGI, and writes a fitted config fragment:
+标定会通过板卡发送受控的相对鼠标移动，通过 DXGI 观察画面位移，并写出拟合后的配置片段：
 
 ```powershell
 xmake run vision_analyzer `
@@ -347,52 +331,46 @@ xmake run vision_analyzer `
   --calibration-config-output hid-tuned.cfg
 ```
 
-Review the generated `hid-tuned.cfg`, then pass it before CLI overrides:
+检查生成的 `hid-tuned.cfg`，然后在 CLI 覆盖参数之前传入该文件：
 
 ```powershell
 xmake run vision_analyzer --config hid-tuned.cfg --backend ort-tensorrt --model D:\project\cs2-vision-trainer\runs\detect\train\weights\best.onnx --input dxgi --dxgi-output 0 --player-side ct --hid-port COM3 --output-enabled
 ```
 
-## Backends
+## 后端
 
 ```text
-opencv-onnx   Explicit CPU ONNX fallback through OpenCV DNN.
-opencv-cuda   Requires OpenCV built with CUDA DNN support.
-ort-cuda      ONNX Runtime CUDA Execution Provider.
-ort-tensorrt  Default GTX 1080 Ti TensorRT EP, with CUDA subgraph fallback.
-tensorrt      Reserved for native TensorRT C++ builds.
+opencv-onnx   通过 OpenCV DNN 显式使用 CPU ONNX 兜底后端。
+opencv-cuda   要求 OpenCV 构建时启用 CUDA DNN 支持。
+ort-cuda      ONNX Runtime CUDA Execution Provider。
+ort-tensorrt  默认的 GTX 1080 Ti TensorRT EP，CUDA 子图作为兜底。
+tensorrt      预留给原生 TensorRT C++ 构建。
 ```
 
-If ONNX Runtime is not configured, ORT backends report unavailable at runtime
-and the OpenCV backend remains usable.
+如果没有配置 ONNX Runtime，ORT 后端会在运行时报告不可用，OpenCV 后端仍可使用。
 
-## Algorithm Notes
+## 算法说明
 
-- Class-aware NMS keeps overlapping head and body candidates from suppressing
-  each other.
-- Body/head detections from the same faction are associated before tracking.
-- Matched head detections are preferred; unmatched body detections remain as
-  fallback anchors near the top of the body box.
-- Track IDs use IoU and anchor-distance matching.
-- Target selection favors stable, close, high-confidence targets and applies a
-  switch penalty to reduce jitter.
-- The target point uses a 2D Kalman state with latency-compensated prediction.
-- `--player-side ct` targets `t_body` and `t_head`.
-- `--player-side t` targets `ct_body` and `ct_head`.
-- Only head classes can trigger `--hid-click`.
+- 按类别执行的 NMS 可避免相互重叠的头部和身体候选框彼此抑制。
+- 跟踪前会先关联同一阵营的身体/头部检测结果。
+- 优先使用已匹配的头部检测；未匹配的身体检测仍可在身体框顶部附近作为兜底锚点。
+- 跟踪 ID 使用 IoU 和锚点距离进行匹配。
+- 目标选择优先考虑稳定、距离近且置信度高的目标，并通过切换惩罚减少抖动。
+- 目标点使用二维卡尔曼状态并进行延迟补偿预测。
+- `--player-side ct` 以 `t_body` 和 `t_head` 为目标。
+- `--player-side t` 以 `ct_body` 和 `ct_head` 为目标。
+- 只有头部类别可以触发 `--hid-click`。
 
-## Windows Pointer Settings
+## Windows 指针设置
 
-The RP2350 firmware emits standard relative USB HID mouse reports. It does not
-apply a pointer curve. Calibration reads and prints Windows pointer thresholds,
-acceleration state, and pointer speed through `SystemParametersInfo`, but it
-does not modify those settings.
+RP2350 固件生成标准的相对 USB HID 鼠标报告，不应用指针曲线。标定通过
+`SystemParametersInfo` 读取并输出 Windows 指针阈值、加速状态和指针速度，但不会修改
+这些设置。
 
-If the target application consumes normal Windows pointer movement, pointer
-speed and Enhance Pointer Precision can affect motion. If it consumes Raw Input,
-movement is usually dominated by HID counts and in-application sensitivity.
+如果目标应用使用普通 Windows 指针移动，指针速度和“提高指针精确度”会影响移动；如果
+应用使用 Raw Input，移动通常主要由 HID 计数和应用内灵敏度决定。
 
-Tune these values on the actual target machine:
+请在实际目标机器上调整以下参数：
 
 ```text
 --hid-gain
@@ -400,7 +378,7 @@ Tune these values on the actual target machine:
 --hid-deadzone
 ```
 
-## CLI Help
+## CLI 帮助
 
 ```powershell
 xmake run vision_analyzer --help
@@ -408,13 +386,13 @@ xmake run vision_analyzer --help
 
 ## C API DLL
 
-`vision_runtime.dll` exports a stable C ABI declared in:
+`vision_runtime.dll` 导出稳定的 C ABI，其声明位于：
 
 ```text
 include\vision_analyzer\vision_runtime_c_api.h
 ```
 
-The API uses an opaque `VaRuntime*` handle and plain C structs:
+该 API 使用不透明的 `VaRuntime*` 句柄和普通 C 结构体：
 
 ```c
 VaRuntime* runtime = va_create();
@@ -451,24 +429,23 @@ va_stop_all(runtime);
 va_destroy(runtime);
 ```
 
-Return codes:
+返回码：
 
 ```text
-0   success for configuration/open/close calls
-1   frame processed for va_process_next
-0   end-of-stream for va_process_next
--1  error; read va_last_error(runtime)
+0   配置/打开/关闭调用成功
+1   va_process_next 已处理一帧
+0   va_process_next 已到达流末尾
+-1  发生错误；读取 va_last_error(runtime)
 ```
 
-The main Python repository wraps this DLL with `cs2_vision_runtime.VisionRuntime`.
-Any wrapper that needs live HID output must bind and call
-`va_set_output_enabled`; an older wrapper remains safely disarmed even though
-`va_process_next` continues returning planned actions.
+父 Python 仓库通过 `cs2_vision_runtime.VisionRuntime` 封装此 DLL。任何需要实时 HID
+输出的包装层都必须绑定并调用 `va_set_output_enabled`；旧包装层即使继续通过
+`va_process_next` 获取规划动作，也会安全地保持未武装状态。
 
-## GTX 1080 Ti Portable Package
+## GTX 1080 Ti 便携包
 
-Build the fixed ORT 1.17.3 / TensorRT 8.6.1.6 / CUDA 11.8 package with the
-matching outer Python worktree explicitly selected:
+构建固定版本的 ORT 1.17.3 / TensorRT 8.6.1.6 / CUDA 11.8 便携包时，需要显式指定
+与之匹配的外层 Python 工作区：
 
 ```powershell
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
@@ -477,6 +454,5 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass `
   -TensorRtArchive 'C:\path\to\TensorRT-8.6.1.6.Windows10.x86_64.cuda-11.8.zip'
 ```
 
-The archive includes the stdlib-only Python wrapper and live example, but no
-Python interpreter. All one-click diagnostics remain dry-run and never call an
-output-arming API.
+压缩包包含只依赖 Python 标准库的包装层和实时示例，但不包含 Python 解释器。所有一键
+诊断均保持为试运行，绝不会调用输出武装 API。
