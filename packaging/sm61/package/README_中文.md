@@ -73,10 +73,20 @@ Python 依赖；本压缩包不捆绑 Python 解释器。
 宿主必须按以下顺序调用：
 
 1. 设置模型、RP2350 串口和玩家阵营。
-2. 进入对局并保持画面稳定，然后调用一次 `calibrate_hid()`。
-3. 设置头/身体开火策略，再打开 DXGI。
-4. 分别调用 `set_output_enabled(True)` 和 `set_fire_enabled(True)`。
-5. 停止或异常退出时，依次关闭开火、关闭移动输出并调用 `stop_all()`。
+2. 调用 `set_hid_calibration_path("hid-calibration.json")` 选择一个本地文件。
+3. 调用 `get_hid_calibration()`；只有返回的 `valid` 为假时，才在已进入对局且
+   画面稳定的场景调用 `calibrate_hid()`。
+4. 设置头/身体开火策略，再打开 DXGI。
+5. 分别调用 `set_output_enabled(True)` 和 `set_fire_enabled(True)`。
+6. 停止或异常退出时，依次关闭开火、关闭移动输出并调用 `stop_all()`。
+
+对应 C API 是 `va_set_hid_calibration_path`、`va_get_hid_calibration` 和现有的
+`va_calibrate_hid`。第一次成功标定会先完整校验候选 profile，再原子写入文件，最后
+才安装到内存。后续进程设置同一路径时会直接加载，不打开 DXGI 标定流程，也不会移动
+鼠标。文件损坏、保存失败或重新标定失败都不会覆盖已经有效的旧文件和旧内存 profile。
+
+DLL 只保存调用端指定的一个文件，不识别账号，也不决定何时重标定。调用端在自己的
+设置发生变化时显式再次调用 `calibrate_hid()`；Python 示例对应使用 `--recalibrate`。
 
 两个开关相互独立。新建运行时默认都关闭；只有 Python 明确开启后才会产生物理
 移动或点击。头部优先，身体只在躯干有效区域内作为低优先级兜底。
@@ -88,18 +98,19 @@ Python 依赖；本压缩包不捆绑 Python 解释器。
 ```powershell
 $env:PYTHONPATH=(Resolve-Path '.\python').Path
 $env:CS2_VISION_RUNTIME_DLL=(Resolve-Path '.\app\vision_runtime.dll').Path
-python .\examples\runtime_live_move.py --hid-port COM3 --player-side ct --enable-live-output --click
+python .\examples\runtime_live_move.py --hid-port COM4 --player-side ct --calibration-path .\hid-calibration.json --enable-live-output --click
 ```
 
-把 `COM3` 改为 RP2350 的实际串口。去掉 `--click` 时只自动瞄准、不自动开火；
+把 `COM4` 改为 RP2350 的实际串口。去掉 `--click` 时只自动瞄准、不自动开火；
 不加 `--enable-live-output` 时程序会在标定前退出，完全不触碰硬件。包装层会自动
 加载包内 CUDA 11.8、cuDNN 8.9、TensorRT 8.6.1.6 和 MSVC 私有运行库，不需要
 修改系统 PATH。按 `Ctrl+C` 会通过 `finally` 撤销开火和移动输出。
 
-启动标定会自动为 X、Y 两个方向寻找适合当前账号灵敏度的探测档位。低灵敏度账号可能
-短暂出现比以前更明显的左右、上下转动，探测最高可到 2048 counts；每次探测后都会立即
-发送精确反向移动归位。2048 只用于标定，标定通过后的正常瞄准仍严格限制为
-`max_step=120`。正常完成时应依次看到类似以下标记：
+第一次运行且本地文件不存在时，示例会为 X、Y 两个方向寻找可测量的探测档位。低灵敏度
+设置可能短暂出现较明显的左右、上下转动，探测最高可到 2048 counts；每次探测后都会
+立即发送精确反向移动归位。2048 只用于标定，标定通过后的正常瞄准仍严格限制为
+`max_step=120`。多区域测量会忽略下方武器/HUD和中央准星，单个坏画面只在原档重试；
+中高档仍不可用时只会逐步向下降档，绝不会放大到更高 counts。正常首次完成时会看到：
 
 ```text
 probe_levels axis=x counts=...
@@ -109,12 +120,17 @@ fit valid=1
 DXGI 已打开
 ```
 
+关闭进程后用同一条命令再次运行，应先看到“已加载本地标定，不移动鼠标”，随后直接打开
+DXGI。只有调用端明确增加 `--recalibrate` 才会再次执行受控标定移动。如果两轮探测直到
+2048 都没有 coherent 视觉移动，DLL 会报告 `HID calibration input not ready` 并保留旧
+profile；此时应检查游戏是否接收输入、画面是否稳定，而不是继续扩大运行输出。
+
 本次更新不需要重新刷 RP2350 固件，也不改变现有 ORT 1.17.3、TensorRT 8.6.1.6、
 CUDA 11.8、cuDNN 8.9.7 环境。
 
-`probe_levels` 之后的 `sample` counts 只应来自该轴列出的三个档位及其相反数。
-除非 `probe_levels` 本身包含 2048，否则正式 `sample` 不会突然出现 2048。每个
-repeat 会分别输出 `leg=outward` 和 `leg=return`，表示真实的移出腿和反向归位腿。
+`probe_levels` 是初始计划，`sample_levels` 是经过有界向下降档后真正用于拟合的三个
+档位。正式 `sample` counts 只来自当次尝试的档位及其相反数；每个 repeat 会分别输出
+`leg=outward` 和 `leg=return`，表示真实的移出腿和反向归位腿。
 
 `一键检查并测试.cmd` 始终只做安全试运行，与上述真实 Python 会话是两条独立
 路径，不会自动开始标定或武装输出。

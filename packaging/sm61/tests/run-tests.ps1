@@ -421,6 +421,23 @@ try {
         foreach ($token in @($protocolV2, 'ping/info/caps', '500 ms', $twoSeconds)) {
             Assert-True ($readme.Contains($token)) "package README must document $token"
         }
+        foreach ($token in @(
+            'set_hid_calibration_path',
+            'get_hid_calibration',
+            '--calibration-path',
+            '--recalibrate',
+            'max_step=120'
+        )) {
+            Assert-True ($readme.Contains($token)) "package README must document $token"
+        }
+
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+        $cApiHeader = Get-Content -LiteralPath `
+            (Join-Path $repoRoot 'include\vision_analyzer\vision_runtime_c_api.h') `
+            -Raw
+        foreach ($token in @('va_set_hid_calibration_path', 'va_get_hid_calibration')) {
+            Assert-True ($cApiHeader.Contains($token)) "C API header must declare $token"
+        }
 
         $common = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\common.ps1') -Raw
         foreach ($relative in @(
@@ -592,9 +609,20 @@ try {
             'set_fire_enabled',
             'finally',
             '--enable-live-output',
+            '--calibration-path',
+            '--recalibrate',
+            'set_hid_calibration_path',
+            'get_hid_calibration',
             'ROOT / "model"'
         )) {
             Assert-True ($content.Contains($token)) "Python live example must contain $token"
+        }
+
+        $wrapper = Join-Path $resolvedPythonRoot 'src\cs2_vision_runtime\runtime.py'
+        Assert-True (Test-Path -LiteralPath $wrapper -PathType Leaf) 'Python runtime wrapper must exist'
+        $wrapperContent = Get-Content -LiteralPath $wrapper -Raw
+        foreach ($token in @('va_set_hid_calibration_path', 'va_get_hid_calibration')) {
+            Assert-True ($wrapperContent.Contains($token)) "Python wrapper must bind $token"
         }
     }
 } finally {
