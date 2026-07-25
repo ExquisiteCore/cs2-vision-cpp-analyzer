@@ -113,6 +113,11 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     const cv::Mat& before,
     const cv::Mat& after
 );
+[[nodiscard]] VisualShiftEstimate estimate_calibration_axis_shift(
+    const cv::Mat& before,
+    const cv::Mat& after,
+    std::size_t axis
+);
 [[nodiscard]] cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after);
 [[nodiscard]] CalibrationRoundTripMeasurement estimate_calibration_round_trip(
     const cv::Mat& baseline,
@@ -122,7 +127,8 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
 [[nodiscard]] CalibrationRoundTripMeasurement estimate_robust_calibration_round_trip(
     const cv::Mat& baseline,
     const cv::Mat& moved,
-    const cv::Mat& returned
+    const cv::Mat& returned,
+    std::size_t axis
 );
 [[nodiscard]] std::vector<CalibrationRoundTripCommand>
 plan_calibration_round_trip_commands(

@@ -865,7 +865,7 @@ void test_calibration_axis_discovery_reports_probe_exhaustion() {
     } catch (const std::runtime_error& error) {
         rejected = std::string(error.what()).find(
             "HID calibration input not ready: axis=x "
-            "no coherent visual movement through 2048 counts"
+            "movement could not be measured reliably through 2048 counts"
         ) != std::string::npos;
     }
     require(rejected, "two-sweep exhaustion must report input-not-ready explicitly");
@@ -1258,6 +1258,78 @@ cv::Mat translated_wrap(const cv::Mat& source, double dx, double dy) {
     return translated;
 }
 
+cv::Mat camera_crop(
+    const cv::Mat& panorama,
+    const cv::Size& viewport_size,
+    int offset_x,
+    int offset_y
+) {
+    return panorama(cv::Rect(offset_x, offset_y, viewport_size.width, viewport_size.height)).clone();
+}
+
+cv::Mat yaw_camera_view(const cv::Mat& source, double center_shift_px) {
+    cv::Mat map_x(source.size(), CV_32F);
+    cv::Mat map_y(source.size(), CV_32F);
+    const double center_x = static_cast<double>(source.cols - 1) * 0.5;
+    const double focal = static_cast<double>(source.cols) * 0.55;
+    for (int y = 0; y < source.rows; ++y) {
+        auto* x_row = map_x.ptr<float>(y);
+        auto* y_row = map_y.ptr<float>(y);
+        for (int x = 0; x < source.cols; ++x) {
+            const double normalized = (static_cast<double>(x) - center_x) / focal;
+            const double perspective = 1.0 + 3.0 * normalized * normalized;
+            x_row[x] = static_cast<float>(x + center_shift_px * perspective);
+            y_row[x] = static_cast<float>(y + 0.8 * normalized);
+        }
+    }
+    cv::Mat moved;
+    cv::remap(
+        source,
+        moved,
+        map_x,
+        map_y,
+        cv::INTER_LINEAR,
+        cv::BORDER_REFLECT101
+    );
+    return moved;
+}
+
+void paint_static_game_hud(cv::Mat& frame) {
+    const cv::Point center(frame.cols / 2, frame.rows / 2);
+    cv::rectangle(frame, {18, 18, 330, 300}, {18, 18, 18}, cv::FILLED);
+    for (int radius = 35; radius <= 125; radius += 30) {
+        cv::circle(frame, {174, 168}, radius, {220, 220, 220}, 3);
+    }
+    cv::rectangle(
+        frame,
+        {center.x - 330, 0, 660, 92},
+        {24, 24, 24},
+        cv::FILLED
+    );
+    for (int x = center.x - 280; x <= center.x + 280; x += 80) {
+        cv::line(frame, {x, 12}, {x + 35, 78}, {245, 245, 245}, 5);
+    }
+    cv::rectangle(
+        frame,
+        {frame.cols - 430, 18, 412, 270},
+        {22, 22, 22},
+        cv::FILLED
+    );
+    for (int y = 42; y < 250; y += 42) {
+        cv::line(
+            frame,
+            {frame.cols - 400, y},
+            {frame.cols - 45, y + 18},
+            {235, 235, 235},
+            4
+        );
+    }
+    cv::line(frame, {center.x - 28, center.y}, {center.x + 28, center.y},
+             {255, 255, 255}, 3);
+    cv::line(frame, {center.x, center.y - 28}, {center.x, center.y + 28},
+             {255, 255, 255}, 3);
+}
+
 void paint_static_calibration_overlay(cv::Mat& before, cv::Mat& after) {
     const cv::Point center(before.cols / 2, before.rows / 2);
     const cv::Rect panel(center.x - 130, center.y - 90, 260, 180);
@@ -1292,6 +1364,30 @@ void test_robust_visual_shift_ignores_static_overlay_and_blank_tile() {
                  "robust estimator should recover background X translation");
     require_near(static_cast<float>(estimate.shift.y), -7.0F, 1.5F,
                  "robust estimator should recover background Y translation");
+}
+
+void test_axis_calibration_shift_recovers_from_static_hud_zero_cluster() {
+    const cv::Size viewport_size{1920, 1080};
+    const cv::Mat panorama = make_textured_calibration_scene({2240, 1240});
+    cv::Mat before = camera_crop(panorama, viewport_size, 80, 80);
+    cv::Mat after = yaw_camera_view(before, 12.0);
+    paint_static_game_hud(before);
+    paint_static_game_hud(after);
+
+    const VisualShiftEstimate whole_frame =
+        estimate_visual_shift_with_response(before, after);
+    const VisualShiftEstimate tiled = estimate_robust_visual_shift(before, after);
+    const VisualShiftEstimate recovered =
+        estimate_calibration_axis_shift(before, after, 0);
+
+    require(std::abs(whole_frame.shift.x) >= 8.0,
+            "whole-frame reference must contain visible camera movement");
+    require(tiled.coherent,
+            "static HUD zero candidates reproduce a coherent but wrong tile cluster");
+    require(std::abs(tiled.shift.x) < 1.0,
+            "test scene must reproduce the observed static-HUD zero lock");
+    require(recovered.coherent && std::abs(recovered.shift.x) >= 8.0,
+            "axis calibration must recover visible camera movement from its reference");
 }
 
 void test_robust_visual_shift_requires_multiple_textured_regions() {
@@ -1919,6 +2015,7 @@ int main() {
         test_calibration_round_trip_usability_requires_both_opposite_legs();
         test_recovered_level_measurements_fit_three_increasing_knots();
         test_robust_visual_shift_ignores_static_overlay_and_blank_tile();
+        test_axis_calibration_shift_recovers_from_static_hud_zero_cluster();
         test_robust_visual_shift_requires_multiple_textured_regions();
         test_robust_visual_shift_rejects_one_isolated_textured_region();
         test_visual_shift_estimate_preserves_phase_response();

@@ -300,6 +300,56 @@ VisualShiftEstimate estimate_robust_visual_shift(
     return aggregate_tile_candidates(candidates);
 }
 
+VisualShiftEstimate estimate_calibration_axis_shift(
+    const cv::Mat& before,
+    const cv::Mat& after,
+    std::size_t axis
+) {
+    if (axis > 1) {
+        throw std::invalid_argument("invalid HID calibration axis");
+    }
+
+    const VisualShiftEstimate tiled = estimate_robust_visual_shift(before, after);
+    const VisualShiftEstimate reference =
+        estimate_visual_shift_with_response(before, after);
+    const auto main_shift = [axis](const VisualShiftEstimate& estimate) {
+        return std::abs(axis == 0 ? estimate.shift.x : estimate.shift.y);
+    };
+    const auto cross_shift = [axis](const VisualShiftEstimate& estimate) {
+        return std::abs(axis == 0 ? estimate.shift.y : estimate.shift.x);
+    };
+
+    const double reference_main = main_shift(reference);
+    const double reference_cross = cross_shift(reference);
+    const bool reliable_reference =
+        std::isfinite(reference.shift.x) &&
+        std::isfinite(reference.shift.y) &&
+        std::isfinite(reference.response) &&
+        reference.response >= kCalibrationMinimumPhaseResponse &&
+        reference_main >= 1.5 &&
+        reference_cross <= reference_main * 0.35;
+    if (!reliable_reference) {
+        return tiled;
+    }
+
+    const double tiled_main = main_shift(tiled);
+    const double tiled_cross = cross_shift(tiled);
+    const bool reliable_tiled_direction =
+        tiled.coherent &&
+        std::isfinite(tiled.shift.x) &&
+        std::isfinite(tiled.shift.y) &&
+        std::isfinite(tiled.response) &&
+        tiled.response >= kCalibrationMinimumPhaseResponse &&
+        tiled_main >= 1.5 &&
+        tiled_cross <= tiled_main * 0.35;
+    const bool tiled_zero_lock =
+        !reliable_tiled_direction ||
+        tiled_main < reference_main * 0.25;
+    return tiled_zero_lock
+        ? VisualShiftEstimate{reference.shift, reference.response, true}
+        : tiled;
+}
+
 cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after) {
     return estimate_visual_shift_with_response(before, after).shift;
 }
@@ -318,11 +368,12 @@ CalibrationRoundTripMeasurement estimate_calibration_round_trip(
 CalibrationRoundTripMeasurement estimate_robust_calibration_round_trip(
     const cv::Mat& baseline,
     const cv::Mat& moved,
-    const cv::Mat& returned
+    const cv::Mat& returned,
+    std::size_t axis
 ) {
     return {
-        estimate_robust_visual_shift(baseline, moved),
-        estimate_robust_visual_shift(moved, returned),
+        estimate_calibration_axis_shift(baseline, moved, axis),
+        estimate_calibration_axis_shift(moved, returned, axis),
     };
 }
 
@@ -553,7 +604,7 @@ CalibrationAxisDiscovery discover_calibration_axis(
     std::ostringstream message;
     message << "HID calibration input not ready: axis="
             << (axis == 0 ? 'x' : 'y')
-            << " no coherent visual movement through "
+            << " movement could not be measured reliably through "
             << kCalibrationProbeMaximumCounts
             << " counts";
     throw std::runtime_error(message.str());
@@ -778,7 +829,8 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                     estimate_robust_calibration_round_trip(
                         baseline.image,
                         moved.image,
-                        returned.image
+                        returned.image,
+                        axis
                     );
                 baseline = std::move(returned);
                 return measurement;
