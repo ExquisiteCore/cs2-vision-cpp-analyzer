@@ -24,6 +24,20 @@ function Get-FileSha256 {
     (Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256).Hash.ToUpperInvariant()
 }
 
+function Assert-Rp2350ProtocolV2Binary {
+    param([Parameter(Mandatory)][string]$LiteralPath)
+
+    if (-not (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
+        throw "Release binary does not exist: $LiteralPath"
+    }
+    $binaryText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($LiteralPath))
+    $missingSdkMarker = 'RP2350 HID bridge SDK is not available in this build'
+    $protocolV2Marker = 'RP2350 protocol v2 capabilities are required'
+    if ($binaryText.Contains($missingSdkMarker) -or -not $binaryText.Contains($protocolV2Marker)) {
+        throw "Release binary does not contain the required RP2350 protocol v2 integration: $LiteralPath"
+    }
+}
+
 function Get-ImmutablePackageFiles {
     param([Parameter(Mandatory)][string]$PackageRoot)
 
@@ -471,6 +485,7 @@ function Resolve-TensorRtArchive {
 
 Export-ModuleMember -Function @(
     'Get-FileSha256',
+    'Assert-Rp2350ProtocolV2Binary',
     'Get-ImmutablePackageFiles',
     'Write-PackageManifest',
     'Test-PackageManifest',

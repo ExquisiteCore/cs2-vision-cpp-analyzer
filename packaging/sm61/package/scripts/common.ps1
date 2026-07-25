@@ -113,6 +113,24 @@ function Test-PackageManifest {
     }
 }
 
+function Assert-Rp2350ProtocolV2Manifest {
+    param([Parameter(Mandatory)]$Manifest)
+
+    $matches = @(
+        @($Manifest.components) | Where-Object {
+            [string]$_.id -eq 'rp2350-hid-sdk'
+        }
+    )
+    if ($matches.Count -ne 1) {
+        throw '运行环境清单必须包含且只能包含一个 rp2350-hid-sdk protocol-v2 组件。'
+    }
+    $component = $matches[0]
+    if ([string]$component.version -ne 'protocol-v2' -or
+        [string]$component.sourceMode -ne 'header-only-build') {
+        throw '运行环境清单中的 rp2350-hid-sdk 必须为 protocol-v2 header-only-build。'
+    }
+}
+
 function Get-RuntimePathEntries {
     $root = Get-PackageRoot
     @(

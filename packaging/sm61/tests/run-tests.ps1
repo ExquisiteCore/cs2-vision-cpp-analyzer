@@ -134,6 +134,38 @@ try {
         }
     }
 
+    Invoke-Test 'package-side manifest requires one RP2350 protocol v2 component' {
+        $common = Join-Path (Join-Path $PSScriptRoot '..') 'package\scripts\common.ps1'
+        & {
+            . $common
+
+            $missing = [pscustomobject]@{ components = @() }
+            Assert-Throws {
+                Assert-Rp2350ProtocolV2Manifest -Manifest $missing
+            } 'rp2350-hid-sdk|protocol-v2' 'missing RP2350 build metadata must be rejected'
+
+            $legacy = [pscustomobject]@{
+                components = @([pscustomobject]@{
+                    id = 'rp2350-hid-sdk'
+                    version = 'protocol-v1'
+                    sourceMode = 'header-only-build'
+                })
+            }
+            Assert-Throws {
+                Assert-Rp2350ProtocolV2Manifest -Manifest $legacy
+            } 'protocol-v2' 'legacy RP2350 build metadata must be rejected'
+
+            $current = [pscustomobject]@{
+                components = @([pscustomobject]@{
+                    id = 'rp2350-hid-sdk'
+                    version = 'protocol-v2'
+                    sourceMode = 'header-only-build'
+                })
+            }
+            Assert-Rp2350ProtocolV2Manifest -Manifest $current
+        }
+    }
+
     Invoke-Test 'package command preserves native stderr warnings under Windows PowerShell 5.1' {
         $common = Join-Path (Join-Path $PSScriptRoot '..') 'package\scripts\common.ps1'
         . $common
@@ -192,6 +224,23 @@ try {
         $root = Join-Path $testRoot 'misplaced-ort'
         New-EmptyFile (Join-Path $root 'runtime\cuda-11.8\onnxruntime_providers_cuda.dll')
         Assert-Throws { Assert-CompatibleRuntimeFiles -PackageRoot $root } 'ONNX Runtime provider|onnxruntime_providers_cuda' 'misplaced ORT provider must be rejected'
+    }
+
+    Invoke-Test 'RP2350 protocol v2 binary gate rejects legacy releases' {
+        $root = Join-Path $testRoot 'rp2350-binary-gate'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $legacyDll = Join-Path $root 'legacy.dll'
+        $v2Dll = Join-Path $root 'v2.dll'
+        [IO.File]::WriteAllText($legacyDll, 'legacy RP2350 HID runtime')
+        [IO.File]::WriteAllText(
+            $v2Dll,
+            'RP2350 protocol v2 capabilities are required'
+        )
+
+        Assert-Throws {
+            Assert-Rp2350ProtocolV2Binary -LiteralPath $legacyDll
+        } 'protocol v2' 'legacy HID release DLL must be rejected'
+        Assert-Rp2350ProtocolV2Binary -LiteralPath $v2Dll
     }
 
     Invoke-Test 'TensorRT 8.6.1.6 layout is accepted' {
@@ -512,8 +561,9 @@ try {
             'src\cs2_vision_runtime',
             'examples\runtime_live_move.py',
             'python\cs2_vision_runtime',
-            'RP2350 HID bridge SDK is not available in this build',
-            'Text.Encoding]::ASCII.GetString'
+            'Assert-Rp2350ProtocolV2Binary',
+            'rp2350-hid-sdk',
+            'protocol-v2'
         )) {
             Assert-True ($content.Contains($token)) "builder must use $token"
         }

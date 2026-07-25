@@ -20,6 +20,7 @@ if (-not $manifest.Valid) {
 if ($manifest.Profile -ne 'sm61-ort1173-trt861-fp32') {
     throw "运行环境配置错误：$($manifest.Profile)"
 }
+Assert-Rp2350ProtocolV2Manifest -Manifest $manifest.Manifest
 Write-PackageLog -LogPath $logPath -Message "清单校验通过：$($manifest.Profile)"
 
 Assert-RequiredRuntimeFiles

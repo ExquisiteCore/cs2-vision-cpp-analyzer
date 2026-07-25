@@ -157,10 +157,7 @@ foreach ($name in @('vision_runtime.dll', 'vision_runtime.lib', 'vision_analyzer
     Assert-LeafFile -LiteralPath (Join-Path $ReleaseRoot $name) -Description "Release output '$name'"
 }
 $visionRuntimePath = Join-Path $ReleaseRoot 'vision_runtime.dll'
-$visionRuntimeText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($visionRuntimePath))
-if ($visionRuntimeText.Contains('RP2350 HID bridge SDK is not available in this build')) {
-    throw 'vision_runtime.dll was built without RP2350 HID bridge support; configure hid_sdk_root before packaging.'
-}
+Assert-Rp2350ProtocolV2Binary -LiteralPath $visionRuntimePath
 Assert-LeafFile -LiteralPath (Join-Path $repoRoot 'include\vision_analyzer\vision_runtime_c_api.h') -Description 'C API header'
 Assert-LeafFile -LiteralPath $ModelPath -Description 'Model'
 Assert-LeafFile -LiteralPath $SchemaPath -Description 'Model schema'
@@ -322,6 +319,11 @@ try {
             $copy | Add-Member -NotePropertyName actualFileVersion -NotePropertyValue $msvcp.VersionInfo.FileVersion
         }
         $manifestComponents += $copy
+    }
+    $manifestComponents += [pscustomobject][ordered]@{
+        id = 'rp2350-hid-sdk'
+        version = 'protocol-v2'
+        sourceMode = 'header-only-build'
     }
     Write-PackageManifest -PackageRoot $OutputRoot -Profile $profile -Components @($manifestComponents)
     $manifestResult = Test-PackageManifest -PackageRoot $OutputRoot
