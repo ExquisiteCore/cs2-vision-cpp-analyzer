@@ -51,8 +51,8 @@ struct CalibrationRoundTripMeasurement {
 };
 
 constexpr int kCalibrationProbeMinimumCounts = 8;
-constexpr int kCalibrationProbeMaximumCounts = 2048;
-constexpr int kCalibrationDiscoveryMaximumAttempts = 8;
+constexpr int kCalibrationProbeMaximumCounts = 120;
+constexpr int kCalibrationDiscoveryMaximumAttempts = 4;
 constexpr int kCalibrationProbeMeasurementsPerCount = 3;
 constexpr int kCalibrationDiscoverySweeps = 2;
 constexpr int kCalibrationMaximumDownwardLevelCandidates = 4;
@@ -128,7 +128,8 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     const cv::Mat& after
 );
 [[nodiscard]] std::size_t select_center_flow_candidate(
-    const std::vector<CenterFlowEstimate>& candidates
+    const std::vector<CenterFlowEstimate>& candidates,
+    std::size_t axis
 );
 [[nodiscard]] VisualShiftEstimate estimate_calibration_axis_shift(
     const cv::Mat& before,

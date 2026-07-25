@@ -513,12 +513,23 @@ CenterFlowEstimate estimate_center_flow(
 }
 
 std::size_t select_center_flow_candidate(
-    const std::vector<CenterFlowEstimate>& candidates
+    const std::vector<CenterFlowEstimate>& candidates,
+    std::size_t axis
 ) {
+    if (axis > 1) {
+        throw std::invalid_argument("invalid center flow selection axis");
+    }
     std::size_t selected = candidates.size();
     for (std::size_t index = 0; index < candidates.size(); ++index) {
         const CenterFlowEstimate& candidate = candidates[index];
-        if (!candidate.reliable) {
+        const double main = std::abs(
+            axis == 0 ? candidate.shift.x : candidate.shift.y
+        );
+        const double cross = std::abs(
+            axis == 0 ? candidate.shift.y : candidate.shift.x
+        );
+        if (!candidate.reliable || !std::isfinite(main) || !std::isfinite(cross) ||
+            main < 0.5 || cross > std::max(0.75, main * 0.35)) {
             continue;
         }
         if (selected == candidates.size()) {
@@ -845,9 +856,9 @@ CalibrationAxisDiscovery discover_calibration_axis(
     std::ostringstream message;
     message << "HID calibration input not ready: axis="
             << (axis == 0 ? 'x' : 'y')
-            << " movement could not be measured reliably through "
+            << " center movement was not measurable through "
             << kCalibrationProbeMaximumCounts
-            << " counts";
+            << " counts; present a stable textured surface near the crosshair";
     throw std::runtime_error(message.str());
 }
 
@@ -1050,6 +1061,66 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
             "failed to capture baseline DXGI frame for HID calibration"
         );
         const cv::Size frame_size = baseline.image.size();
+        struct BurstFlowResult {
+            CapturedFrame frame;
+            CenterFlowEstimate flow;
+            std::size_t candidate_index = 0;
+        };
+        struct BalancedFlowProbe {
+            CalibrationRoundTripMeasurement measurement;
+            CenterFlowEstimate outward_flow;
+            CenterFlowEstimate inverse_flow;
+            std::size_t outward_candidate = 0;
+            std::size_t inverse_candidate = 0;
+        };
+        const auto visual_estimate = [](const CenterFlowEstimate& flow) {
+            const double response = flow.tracked_features > 0
+                ? static_cast<double>(flow.inlier_features) /
+                      static_cast<double>(flow.tracked_features)
+                : 0.0;
+            return VisualShiftEstimate{flow.shift, response, flow.reliable};
+        };
+        const auto capture_flow_burst = [&](
+            const CapturedFrame& reference,
+            std::size_t axis,
+            const char* error_message
+        ) {
+            constexpr std::size_t kBurstFrames = 6;
+            std::vector<CapturedFrame> frames;
+            std::vector<CenterFlowEstimate> estimates;
+            frames.reserve(kBurstFrames);
+            estimates.reserve(kBurstFrames);
+            for (std::size_t index = 0; index < kBurstFrames; ++index) {
+                frames.push_back(capture(error_message));
+                estimates.push_back(estimate_center_flow(
+                    reference.image,
+                    frames.back().image
+                ));
+            }
+
+            std::size_t selected = 0;
+            try {
+                selected = select_center_flow_candidate(estimates, axis);
+            } catch (const std::runtime_error&) {
+                for (std::size_t index = 1; index < estimates.size(); ++index) {
+                    const CenterFlowEstimate& candidate = estimates[index];
+                    const CenterFlowEstimate& current = estimates[selected];
+                    if (candidate.inlier_features > current.inlier_features ||
+                        (candidate.inlier_features == current.inlier_features &&
+                         candidate.tracked_features > current.tracked_features) ||
+                        (candidate.inlier_features == current.inlier_features &&
+                         candidate.tracked_features == current.tracked_features &&
+                         candidate.detected_features > current.detected_features)) {
+                        selected = index;
+                    }
+                }
+            }
+            return BurstFlowResult{
+                std::move(frames[selected]),
+                estimates[selected],
+                selected,
+            };
+        };
         const auto measure_balanced_probe = [&](std::size_t axis, int signed_counts) {
             const int dx = axis == 0 ? signed_counts : 0;
             const int dy = axis == 1 ? signed_counts : 0;
@@ -1057,24 +1128,29 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
             bool inverse_required = true;
             try {
                 wait_for_settle();
-                CapturedFrame moved = capture(
+                BurstFlowResult moved = capture_flow_burst(
+                    baseline,
+                    axis,
                     "failed to capture moved DXGI frame for HID calibration"
                 );
                 send_move(-dx, -dy);
                 inverse_required = false;
                 wait_for_settle();
-                CapturedFrame returned = capture(
+                BurstFlowResult returned = capture_flow_burst(
+                    moved.frame,
+                    axis,
                     "failed to capture returned DXGI frame after HID calibration probe"
                 );
-                const CalibrationRoundTripMeasurement measurement =
-                    estimate_robust_calibration_round_trip(
-                        baseline.image,
-                        moved.image,
-                        returned.image,
-                        axis
-                    );
-                baseline = std::move(returned);
-                return measurement;
+                const VisualShiftEstimate outward = visual_estimate(moved.flow);
+                const VisualShiftEstimate inverse = visual_estimate(returned.flow);
+                baseline = std::move(returned.frame);
+                return BalancedFlowProbe{
+                    {outward, inverse},
+                    moved.flow,
+                    returned.flow,
+                    moved.candidate_index,
+                    returned.candidate_index,
+                };
             } catch (...) {
                 if (inverse_required) {
                     try {
@@ -1108,10 +1184,11 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
             CapturedFrame still = capture(
                 "failed to capture still DXGI frame for HID calibration"
             );
-            const VisualShiftEstimate estimate = estimate_robust_visual_shift(
+            const CenterFlowEstimate flow = estimate_center_flow(
                 baseline.image,
                 still.image
             );
+            const VisualShiftEstimate estimate = visual_estimate(flow);
             samples.push_back({0, 0, estimate.shift, estimate.response, -1});
             if (estimate.coherent &&
                 std::isfinite(estimate.shift.x) &&
@@ -1126,6 +1203,11 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                    << " visual_shift_y=" << estimate.shift.y
                    << " response=" << estimate.response
                    << " coherent=" << (estimate.coherent ? 1 : 0)
+                   << " flow_features=" << flow.detected_features
+                   << " flow_tracks=" << flow.tracked_features
+                   << " flow_inliers=" << flow.inlier_features
+                   << " flow_cells=" << flow.occupied_cells
+                   << " flow_spread=" << flow.spread_px
                    << '\n';
             baseline = std::move(still);
         }
@@ -1145,8 +1227,10 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                 minimum_measurable_shift,
                 maximum_reliable_shift,
                 [&](int counts) {
-                    const CalibrationRoundTripMeasurement measurement =
+                    const BalancedFlowProbe probe =
                         measure_balanced_probe(axis, counts);
+                    const CalibrationRoundTripMeasurement& measurement =
+                        probe.measurement;
                     const VisualShiftEstimate& estimate = measurement.outward;
                     const double main = std::abs(
                         axis == 0 ? estimate.shift.x : estimate.shift.y
@@ -1161,6 +1245,12 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                            << " cross_px=" << cross
                            << " response=" << estimate.response
                            << " coherent=" << (estimate.coherent ? 1 : 0)
+                           << " flow_features=" << probe.outward_flow.detected_features
+                           << " flow_tracks=" << probe.outward_flow.tracked_features
+                           << " flow_inliers=" << probe.outward_flow.inlier_features
+                           << " flow_cells=" << probe.outward_flow.occupied_cells
+                           << " flow_spread=" << probe.outward_flow.spread_px
+                           << " flow_burst_index=" << probe.outward_candidate
                            << '\n';
                     return measurement;
                 },
@@ -1195,8 +1285,10 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                              ++repeat) {
                             const int outward_counts =
                                 repeat % 2 == 0 ? candidate_counts : -candidate_counts;
-                            const CalibrationRoundTripMeasurement measurement =
+                            const BalancedFlowProbe probe =
                                 measure_balanced_probe(axis, outward_counts);
+                            const CalibrationRoundTripMeasurement& measurement =
+                                probe.measurement;
                             measured.push_back({outward_counts, measurement});
 
                             const auto raw_samples = make_calibration_round_trip_samples(
@@ -1209,6 +1301,10 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                                 const CalibrationSample& sample = raw_samples[leg];
                                 const VisualShiftEstimate& estimate =
                                     leg == 0 ? measurement.outward : measurement.inverse;
+                                const CenterFlowEstimate& flow =
+                                    leg == 0 ? probe.outward_flow : probe.inverse_flow;
+                                const std::size_t burst_index =
+                                    leg == 0 ? probe.outward_candidate : probe.inverse_candidate;
                                 output << "sample"
                                        << " type=move"
                                        << " leg=" << (leg == 0 ? "outward" : "return")
@@ -1222,6 +1318,12 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                                        << " visual_shift_y=" << sample.visual_shift.y
                                        << " response=" << sample.phase_response
                                        << " coherent=" << (estimate.coherent ? 1 : 0)
+                                       << " flow_features=" << flow.detected_features
+                                       << " flow_tracks=" << flow.tracked_features
+                                       << " flow_inliers=" << flow.inlier_features
+                                       << " flow_cells=" << flow.occupied_cells
+                                       << " flow_spread=" << flow.spread_px
+                                       << " flow_burst_index=" << burst_index
                                        << '\n';
                             }
                         }

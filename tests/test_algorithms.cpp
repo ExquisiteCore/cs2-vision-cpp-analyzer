@@ -740,11 +740,9 @@ void test_adaptive_calibration_rejects_bad_response_and_cross_axis_motion() {
 }
 
 void test_calibration_probe_adjustment_uses_calibration_only_limit() {
-    require(adjust_calibration_probe_count(16, 0.5, 8.0, 2048) == 256,
-            "tiny movement should scale above the runtime max step");
-    require(adjust_calibration_probe_count(512, 0.5, 8.0, 2048) == 2048,
-            "probe adjustment must stop at the calibration limit");
-    require(adjust_calibration_probe_count(80, 200.0, 80.0, 2048) == 32,
+    require(adjust_calibration_probe_count(16, 0.5, 8.0, 120) == 120,
+            "tiny movement must stop at the runtime-safe calibration limit");
+    require(adjust_calibration_probe_count(80, 200.0, 80.0, 120) == 32,
             "oversized response should scale down proportionally");
 }
 
@@ -755,9 +753,9 @@ void test_calibration_level_plan_compresses_low_sensitivity_range() {
     require(normal.target_shift_px == std::array<double, 3>{8.0, 24.0, 48.0},
             "normal target shifts should remain in the reliable phase-correlation range");
 
-    const CalibrationLevelPlan low = derive_calibration_level_plan(60.0, 1.5);
-    require(low.counts == std::array<int, 3>{480, 1024, 2048},
-            "low sensitivity should use the complete calibration range");
+    const CalibrationLevelPlan low = derive_calibration_level_plan(8.0, 1.5);
+    require(low.counts == std::array<int, 3>{30, 60, 120},
+            "low sensitivity should compress into the runtime-safe range");
     require(low.counts[0] < low.counts[1] && low.counts[1] < low.counts[2],
             "derived counts must be strictly increasing");
 }
@@ -765,32 +763,32 @@ void test_calibration_level_plan_compresses_low_sensitivity_range() {
 void test_calibration_level_plan_rejects_unmeasurable_range() {
     bool rejected = false;
     try {
-        (void)derive_calibration_level_plan(400.0, 1.5);
+        (void)derive_calibration_level_plan(60.0, 1.5);
     } catch (const std::runtime_error& error) {
-        rejected = std::string(error.what()).find("2048") != std::string::npos;
+        rejected = std::string(error.what()).find("120") != std::string::npos;
     }
-    require(rejected, "an unmeasurable 2048-count range must be rejected explicitly");
+    require(rejected, "an unmeasurable 120-count range must be rejected explicitly");
 }
 
 void test_calibration_probe_planner_escalates_low_response() {
     const CalibrationProbePlan plan = plan_calibration_probe(
         120, 0, 2.0, 0.1, 0.05, 4.0, 270.0
     );
-    require(!plan.accepted && !plan.exhausted,
-            "low-response probe should continue discovery");
-    require(plan.next_counts == 240,
-            "unreliable discovery should double instead of trusting its shift");
+    require(!plan.accepted && plan.exhausted,
+            "low-response probe at 120 must stop without a larger movement");
+    require(plan.next_counts == 120,
+            "unreliable discovery must retain the safe maximum");
 }
 
 void test_calibration_probe_planner_accepts_signal_and_rejects_cross_axis() {
     const CalibrationProbePlan accepted = plan_calibration_probe(
-        1000, 1, 8.0, 0.2, 0.80, 4.0, 270.0
+        100, 1, 8.0, 0.2, 0.80, 4.0, 270.0
     );
     require(accepted.accepted && !accepted.exhausted,
             "reliable discovery signal should be accepted");
 
     const CalibrationProbePlan crossed = plan_calibration_probe(
-        1000, 1, 8.0, 4.0, 0.80, 4.0, 270.0
+        100, 1, 8.0, 4.0, 0.80, 4.0, 270.0
     );
     require(!crossed.accepted && crossed.exhausted,
             "dominant cross-axis movement should reject the scene without escalating");
@@ -806,15 +804,15 @@ void test_calibration_axis_discovery_derives_low_sensitivity_levels() {
         [&](int counts) {
             attempted.push_back(counts);
             return CalibrationRoundTripMeasurement{
-                {{-static_cast<double>(counts) / 60.0, 0.05}, 0.90, true},
-                {{static_cast<double>(counts) / 60.0, -0.05}, 0.90, true},
+                {{-static_cast<double>(counts) / 8.0, 0.05}, 0.90, true},
+                {{static_cast<double>(counts) / 8.0, -0.05}, 0.90, true},
             };
         }
     );
-    require(attempted == std::vector<int>({16, 16, 16, 32, 32, 32, 480}),
+    require(attempted == std::vector<int>({16, 16, 16, 64}),
             "subpixel signal should be sampled three times before bounded scaling");
-    require(discovery.probe_counts == 480, "discovery should retain the accepted count");
-    require(discovery.levels.counts == std::array<int, 3>{480, 1024, 2048},
+    require(discovery.probe_counts == 64, "discovery should retain the accepted count");
+    require(discovery.levels.counts == std::array<int, 3>{30, 60, 120},
             "discovery should derive compressed low-sensitivity levels");
 }
 
@@ -865,7 +863,8 @@ void test_calibration_axis_discovery_reports_probe_exhaustion() {
     } catch (const std::runtime_error& error) {
         rejected = std::string(error.what()).find(
             "HID calibration input not ready: axis=x "
-            "movement could not be measured reliably through 2048 counts"
+            "center movement was not measurable through 120 counts; "
+            "present a stable textured surface near the crosshair"
         ) != std::string::npos;
     }
     require(rejected, "two-sweep exhaustion must report input-not-ready explicitly");
@@ -875,7 +874,7 @@ void test_calibration_axis_discovery_reports_probe_exhaustion() {
                     kCalibrationProbeMeasurementsPerCount
                 ),
             "discovery should use three measurements per count for two sweeps");
-    const std::array<int, 8> ladder = {16, 32, 64, 128, 256, 512, 1024, 2048};
+    const std::array<int, 4> ladder = {16, 32, 64, 120};
     for (int sweep = 0; sweep < kCalibrationDiscoverySweeps; ++sweep) {
         for (std::size_t level = 0; level < ladder.size(); ++level) {
             for (int repeat = 0; repeat < kCalibrationProbeMeasurementsPerCount; ++repeat) {
@@ -892,6 +891,8 @@ void test_calibration_axis_discovery_reports_probe_exhaustion() {
     }
     require(kCalibrationRuntimeMaxStep == 120,
             "discovery retries must not change the runtime movement clamp");
+    require(*std::max_element(attempted.begin(), attempted.end()) <= 120,
+            "calibration must never exceed the runtime movement bound");
 }
 
 void test_round_trip_estimation_measures_outward_and_inverse_frames() {
@@ -1448,13 +1449,13 @@ void test_center_flow_rejects_one_spatial_cell() {
 
 void test_center_flow_burst_selects_most_supported_candidate() {
     const std::size_t selected = select_center_flow_candidate({
-        CenterFlowEstimate{{0.0, 0.0}, 80, 60, 0, 0, 0.0, false},
+        CenterFlowEstimate{{0.0, 0.0}, 120, 110, 105, 10, 0.0, true},
         CenterFlowEstimate{{-11.8, 0.2}, 90, 70, 38, 7, 0.6, true},
         CenterFlowEstimate{{-12.1, 0.1}, 90, 72, 29, 6, 0.3, true},
-    });
+    }, 0);
 
     require(selected == 1,
-            "burst selection should prefer more distributed reliable inliers");
+            "commanded-axis movement must beat a stale zero-shift frame");
 }
 
 void test_center_flow_burst_rejects_without_reliable_candidate() {
@@ -1463,7 +1464,7 @@ void test_center_flow_burst_rejects_without_reliable_candidate() {
         (void)select_center_flow_candidate({
             CenterFlowEstimate{{0.0, 0.0}, 0, 0, 0, 0, 0.0, false},
             CenterFlowEstimate{{1.0, 0.0}, 10, 8, 8, 1, 0.2, false},
-        });
+        }, 0);
     } catch (const std::runtime_error& error) {
         rejected = std::string(error.what()).find("center flow") != std::string::npos;
     }
