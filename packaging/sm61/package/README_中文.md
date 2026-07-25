@@ -96,5 +96,21 @@ python .\examples\runtime_live_move.py --hid-port COM3 --player-side ct --enable
 加载包内 CUDA 11.8、cuDNN 8.9、TensorRT 8.6.1.6 和 MSVC 私有运行库，不需要
 修改系统 PATH。按 `Ctrl+C` 会通过 `finally` 撤销开火和移动输出。
 
+启动标定会自动为 X、Y 两个方向寻找适合当前账号灵敏度的探测档位。低灵敏度账号可能
+短暂出现比以前更明显的左右、上下转动，探测最高可到 2048 counts；每次探测后都会立即
+发送精确反向移动归位。2048 只用于标定，标定通过后的正常瞄准仍严格限制为
+`max_step=120`。正常完成时应依次看到类似以下标记：
+
+```text
+probe_levels axis=x counts=...
+probe_levels axis=y counts=...
+fit valid=1
+标定完成 quality=...
+DXGI 已打开
+```
+
+本次更新不需要重新刷 RP2350 固件，也不改变现有 ORT 1.17.3、TensorRT 8.6.1.6、
+CUDA 11.8、cuDNN 8.9.7 环境。
+
 `一键检查并测试.cmd` 始终只做安全试运行，与上述真实 Python 会话是两条独立
 路径，不会自动开始标定或武装输出。
