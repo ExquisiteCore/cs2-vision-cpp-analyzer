@@ -32,6 +32,7 @@ struct CalibrationSample {
 struct VisualShiftEstimate {
     cv::Point2d shift;
     double response = 0.0;
+    bool coherent = true;
 };
 
 struct CalibrationRoundTripMeasurement {
@@ -90,8 +91,17 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     const cv::Mat& before,
     const cv::Mat& after
 );
+[[nodiscard]] VisualShiftEstimate estimate_robust_visual_shift(
+    const cv::Mat& before,
+    const cv::Mat& after
+);
 [[nodiscard]] cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after);
 [[nodiscard]] CalibrationRoundTripMeasurement estimate_calibration_round_trip(
+    const cv::Mat& baseline,
+    const cv::Mat& moved,
+    const cv::Mat& returned
+);
+[[nodiscard]] CalibrationRoundTripMeasurement estimate_robust_calibration_round_trip(
     const cv::Mat& baseline,
     const cv::Mat& moved,
     const cv::Mat& returned

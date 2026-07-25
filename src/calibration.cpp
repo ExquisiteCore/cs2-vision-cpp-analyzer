@@ -76,6 +76,108 @@ namespace {
     return (values[middle - 1] + values[middle]) * 0.5;
 }
 
+[[nodiscard]] cv::Mat full_gray_float(const cv::Mat& input) {
+    if (input.empty()) {
+        throw std::runtime_error("empty frame cannot be used for calibration");
+    }
+    cv::Mat gray;
+    if (input.channels() == 1) {
+        gray = input;
+    } else {
+        cv::cvtColor(input, gray, cv::COLOR_BGR2GRAY);
+    }
+    cv::Mat as_float;
+    gray.convertTo(as_float, CV_32F);
+    return as_float;
+}
+
+[[nodiscard]] std::vector<int> tile_origins(int extent, int tile_extent) {
+    if (extent <= 0 || tile_extent <= 0 || tile_extent > extent) {
+        return {};
+    }
+    const int stride = std::max(1, tile_extent / 2);
+    std::vector<int> origins;
+    for (int origin = 0; origin + tile_extent <= extent; origin += stride) {
+        origins.push_back(origin);
+    }
+    const int final_origin = extent - tile_extent;
+    if (origins.empty() || origins.back() != final_origin) {
+        origins.push_back(final_origin);
+    }
+    return origins;
+}
+
+[[nodiscard]] double gradient_energy(const cv::Mat& tile) {
+    cv::Mat gradient_x;
+    cv::Mat gradient_y;
+    cv::Sobel(tile, gradient_x, CV_32F, 1, 0, 3);
+    cv::Sobel(tile, gradient_y, CV_32F, 0, 1, 3);
+    cv::Mat magnitude;
+    cv::magnitude(gradient_x, gradient_y, magnitude);
+    return cv::mean(magnitude)[0];
+}
+
+struct TileShiftCandidate {
+    cv::Point2d shift;
+    double response = 0.0;
+};
+
+[[nodiscard]] double candidate_tolerance(double left, double right) {
+    return std::max(1.25, 0.18 * std::max({1.0, std::abs(left), std::abs(right)}));
+}
+
+[[nodiscard]] bool candidates_agree(
+    const TileShiftCandidate& left,
+    const TileShiftCandidate& right
+) {
+    return std::abs(left.shift.x - right.shift.x) <=
+               candidate_tolerance(left.shift.x, right.shift.x) &&
+           std::abs(left.shift.y - right.shift.y) <=
+               candidate_tolerance(left.shift.y, right.shift.y);
+}
+
+[[nodiscard]] VisualShiftEstimate aggregate_tile_candidates(
+    const std::vector<TileShiftCandidate>& candidates
+) {
+    std::vector<std::size_t> best_group;
+    double best_response_sum = 0.0;
+    for (std::size_t anchor = 0; anchor < candidates.size(); ++anchor) {
+        std::vector<std::size_t> group;
+        double response_sum = 0.0;
+        for (std::size_t index = 0; index < candidates.size(); ++index) {
+            if (candidates_agree(candidates[anchor], candidates[index])) {
+                group.push_back(index);
+                response_sum += candidates[index].response;
+            }
+        }
+        if (group.size() > best_group.size() ||
+            (group.size() == best_group.size() && response_sum > best_response_sum)) {
+            best_group = std::move(group);
+            best_response_sum = response_sum;
+        }
+    }
+    if (best_group.size() < 2) {
+        return {{0.0, 0.0}, 0.0, false};
+    }
+
+    std::vector<double> shifts_x;
+    std::vector<double> shifts_y;
+    std::vector<double> responses;
+    shifts_x.reserve(best_group.size());
+    shifts_y.reserve(best_group.size());
+    responses.reserve(best_group.size());
+    for (const std::size_t index : best_group) {
+        shifts_x.push_back(candidates[index].shift.x);
+        shifts_y.push_back(candidates[index].shift.y);
+        responses.push_back(candidates[index].response);
+    }
+    return {
+        {median_or_zero(std::move(shifts_x)), median_or_zero(std::move(shifts_y))},
+        median_or_zero(std::move(responses)),
+        true,
+    };
+}
+
 }  // namespace
 
 PointerSettings query_windows_pointer_settings() {
@@ -130,6 +232,74 @@ VisualShiftEstimate estimate_visual_shift_with_response(
     return {shift, response};
 }
 
+VisualShiftEstimate estimate_robust_visual_shift(
+    const cv::Mat& before,
+    const cv::Mat& after
+) {
+    const cv::Mat before_gray = full_gray_float(before);
+    const cv::Mat after_gray = full_gray_float(after);
+    if (before_gray.size() != after_gray.size()) {
+        throw std::runtime_error("calibration frames have different sizes");
+    }
+
+    const int upper_height = std::max(1, static_cast<int>(before_gray.rows * 0.70));
+    const int tile_width = std::min(
+        before_gray.cols,
+        std::max(64, std::min(384, before_gray.cols / 3))
+    );
+    const int tile_height = std::min(
+        upper_height,
+        std::max(64, std::min(256, upper_height / 2))
+    );
+    if (tile_width < 16 || tile_height < 16) {
+        return {{0.0, 0.0}, 0.0, false};
+    }
+
+    const cv::Rect crosshair_exclusion(
+        static_cast<int>(before_gray.cols * 0.44),
+        static_cast<int>(before_gray.rows * 0.42),
+        std::max(1, static_cast<int>(before_gray.cols * 0.12)),
+        std::max(1, static_cast<int>(before_gray.rows * 0.16))
+    );
+    cv::Mat hanning;
+    cv::createHanningWindow(hanning, {tile_width, tile_height}, CV_32F);
+
+    std::vector<TileShiftCandidate> candidates;
+    for (const int y : tile_origins(upper_height, tile_height)) {
+        for (const int x : tile_origins(before_gray.cols, tile_width)) {
+            const cv::Rect tile_rect(x, y, tile_width, tile_height);
+            const cv::Rect excluded = tile_rect & crosshair_exclusion;
+            if (excluded.area() > tile_rect.area() * 0.20) {
+                continue;
+            }
+            const cv::Mat before_tile = before_gray(tile_rect);
+            const cv::Mat after_tile = after_gray(tile_rect);
+            if (gradient_energy(before_tile) < 5.0 ||
+                gradient_energy(after_tile) < 5.0) {
+                continue;
+            }
+
+            double response = 0.0;
+            const cv::Point2d shift = cv::phaseCorrelate(
+                before_tile,
+                after_tile,
+                hanning,
+                &response
+            );
+            const double maximum_shift =
+                static_cast<double>(std::min(tile_width, tile_height)) * 0.35;
+            if (!std::isfinite(shift.x) || !std::isfinite(shift.y) ||
+                !std::isfinite(response) || response < 0.10 ||
+                std::abs(shift.x) > maximum_shift ||
+                std::abs(shift.y) > maximum_shift) {
+                continue;
+            }
+            candidates.push_back({shift, response});
+        }
+    }
+    return aggregate_tile_candidates(candidates);
+}
+
 cv::Point2d estimate_visual_shift(const cv::Mat& before, const cv::Mat& after) {
     return estimate_visual_shift_with_response(before, after).shift;
 }
@@ -142,6 +312,17 @@ CalibrationRoundTripMeasurement estimate_calibration_round_trip(
     return {
         estimate_visual_shift_with_response(baseline, moved),
         estimate_visual_shift_with_response(moved, returned),
+    };
+}
+
+CalibrationRoundTripMeasurement estimate_robust_calibration_round_trip(
+    const cv::Mat& baseline,
+    const cv::Mat& moved,
+    const cv::Mat& returned
+) {
+    return {
+        estimate_robust_visual_shift(baseline, moved),
+        estimate_robust_visual_shift(moved, returned),
     };
 }
 

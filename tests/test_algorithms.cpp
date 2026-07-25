@@ -942,6 +942,94 @@ void test_round_trip_sampling_can_recover_from_one_bad_path() {
     require(profile.max_step == 120, "round-trip fitting must retain the runtime clamp");
 }
 
+cv::Mat make_textured_calibration_scene(const cv::Size& size) {
+    cv::Mat scene(size, CV_8UC3);
+    cv::RNG random(0x2350);
+    random.fill(scene, cv::RNG::UNIFORM, 0, 255);
+    cv::GaussianBlur(scene, scene, {5, 5}, 0.8);
+    for (int y = 20; y < size.height; y += 47) {
+        cv::line(scene, {0, y}, {size.width - 1, y + 13}, {20, 210, 90}, 2);
+    }
+    for (int x = 30; x < size.width; x += 71) {
+        cv::circle(scene, {x, (x * 7) % size.height}, 11, {230, 40, 180}, 2);
+    }
+    return scene;
+}
+
+cv::Mat translated_wrap(const cv::Mat& source, double dx, double dy) {
+    cv::Mat translated;
+    const cv::Mat transform = (cv::Mat_<double>(2, 3) <<
+        1.0, 0.0, dx,
+        0.0, 1.0, dy);
+    cv::warpAffine(
+        source,
+        translated,
+        transform,
+        source.size(),
+        cv::INTER_LINEAR,
+        cv::BORDER_WRAP
+    );
+    return translated;
+}
+
+void paint_static_calibration_overlay(cv::Mat& before, cv::Mat& after) {
+    const cv::Point center(before.cols / 2, before.rows / 2);
+    const cv::Rect panel(center.x - 130, center.y - 90, 260, 180);
+    for (cv::Mat* frame : {&before, &after}) {
+        cv::rectangle(*frame, panel, {12, 12, 12}, cv::FILLED);
+        cv::rectangle(*frame, panel, {250, 250, 250}, 4);
+        cv::line(*frame, {center.x - 110, center.y},
+                 {center.x + 110, center.y}, {255, 255, 255}, 6);
+        cv::line(*frame, {center.x, center.y - 75},
+                 {center.x, center.y + 75}, {255, 255, 255}, 6);
+        cv::rectangle(
+            *frame,
+            {0, static_cast<int>(frame->rows * 0.78), frame->cols, frame->rows},
+            {35, 35, 35},
+            cv::FILLED
+        );
+    }
+}
+
+void test_robust_visual_shift_ignores_static_overlay_and_blank_tile() {
+    cv::Mat before = make_textured_calibration_scene({960, 540});
+    cv::Mat after = translated_wrap(before, 18.0, -7.0);
+    paint_static_calibration_overlay(before, after);
+    cv::rectangle(before, {0, 0, 220, 170}, {64, 64, 64}, cv::FILLED);
+    cv::rectangle(after, {0, 0, 220, 170}, {64, 64, 64}, cv::FILLED);
+
+    const VisualShiftEstimate estimate = estimate_robust_visual_shift(before, after);
+
+    require(estimate.coherent,
+            "agreeing textured tiles should produce a coherent estimate");
+    require_near(static_cast<float>(estimate.shift.x), 18.0F, 1.5F,
+                 "robust estimator should recover background X translation");
+    require_near(static_cast<float>(estimate.shift.y), -7.0F, 1.5F,
+                 "robust estimator should recover background Y translation");
+}
+
+void test_robust_visual_shift_requires_multiple_textured_regions() {
+    cv::Mat before(540, 960, CV_8UC3, cv::Scalar(32, 32, 32));
+    cv::Mat after = before.clone();
+
+    const VisualShiftEstimate estimate = estimate_robust_visual_shift(before, after);
+
+    require(!estimate.coherent,
+            "uniform frames should not fabricate a coherent visual movement");
+}
+
+void test_robust_visual_shift_rejects_one_isolated_textured_region() {
+    cv::Mat before(540, 960, CV_8UC3, cv::Scalar(32, 32, 32));
+    cv::Mat texture = make_textured_calibration_scene({140, 90});
+    texture.copyTo(before(cv::Rect(10, 10, texture.cols, texture.rows)));
+    const cv::Mat after = translated_wrap(before, 12.0, -4.0);
+
+    const VisualShiftEstimate estimate = estimate_robust_visual_shift(before, after);
+
+    require(!estimate.coherent,
+            "one isolated textured region must not satisfy multi-tile agreement");
+}
+
 void test_visual_shift_estimate_preserves_phase_response() {
     cv::Mat image(64, 64, CV_32F);
     cv::randu(image, 0.0F, 255.0F);
@@ -1537,6 +1625,9 @@ int main() {
         test_round_trip_command_plan_alternates_without_final_escalation();
         test_round_trip_samples_assign_real_signed_legs();
         test_round_trip_sampling_can_recover_from_one_bad_path();
+        test_robust_visual_shift_ignores_static_overlay_and_blank_tile();
+        test_robust_visual_shift_requires_multiple_textured_regions();
+        test_robust_visual_shift_rejects_one_isolated_textured_region();
         test_visual_shift_estimate_preserves_phase_response();
         test_runtime_config_file_overrides_tuning_and_io();
         test_runtime_options_reject_invalid_fire_policy();
