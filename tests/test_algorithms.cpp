@@ -1410,6 +1410,42 @@ void test_center_flow_measures_scene_around_fixed_crosshair() {
             "camera movement needs distributed center-scene support");
 }
 
+void test_center_flow_rejects_blank_center() {
+    const cv::Mat before(1080, 1920, CV_8UC3, cv::Scalar(32, 32, 32));
+    const cv::Mat after = before.clone();
+
+    const CenterFlowEstimate estimate = estimate_center_flow(before, after);
+
+    require(!estimate.reliable && estimate.detected_features < 12,
+            "blank center must report insufficient texture");
+}
+
+void test_center_flow_rejects_one_spatial_cell() {
+    cv::Mat before(1080, 1920, CV_8UC3, cv::Scalar(32, 32, 32));
+    const cv::Mat texture = make_textured_calibration_scene({120, 90});
+    texture.copyTo(before(cv::Rect(665, 325, texture.cols, texture.rows)));
+    cv::Mat after;
+    const cv::Mat transform = (cv::Mat_<double>(2, 3) <<
+        1.0, 0.0, -12.0,
+        0.0, 1.0, 0.0);
+    cv::warpAffine(
+        before,
+        after,
+        transform,
+        before.size(),
+        cv::INTER_LINEAR,
+        cv::BORDER_CONSTANT,
+        cv::Scalar(32, 32, 32)
+    );
+
+    const CenterFlowEstimate estimate = estimate_center_flow(before, after);
+
+    require(!estimate.reliable,
+            "one spatial cell must not determine camera movement");
+    require(estimate.inlier_features >= 12 && estimate.occupied_cells < 3,
+            "one-cell rejection should preserve useful support diagnostics");
+}
+
 void test_robust_visual_shift_requires_multiple_textured_regions() {
     cv::Mat before(540, 960, CV_8UC3, cv::Scalar(32, 32, 32));
     cv::Mat after = before.clone();
@@ -2037,6 +2073,8 @@ int main() {
         test_robust_visual_shift_ignores_static_overlay_and_blank_tile();
         test_axis_calibration_shift_recovers_from_static_hud_zero_cluster();
         test_center_flow_measures_scene_around_fixed_crosshair();
+        test_center_flow_rejects_blank_center();
+        test_center_flow_rejects_one_spatial_cell();
         test_robust_visual_shift_requires_multiple_textured_regions();
         test_robust_visual_shift_rejects_one_isolated_textured_region();
         test_visual_shift_estimate_preserves_phase_response();
