@@ -15,6 +15,13 @@ extern "C" {
 typedef struct VaRuntime VaRuntime;
 
 #define VA_HID_CALIBRATION_LEVELS 3
+#define VA_RUNTIME_ABI_MAJOR 2u
+#define VA_RUNTIME_ABI_MINOR 0u
+
+#define VA_RUNTIME_FEATURE_TENSORRT_CACHE UINT64_C(1)
+#define VA_RUNTIME_FEATURE_PERSISTENT_CALIBRATION (UINT64_C(1) << 1)
+#define VA_RUNTIME_FEATURE_OUTPUT_ARMING (UINT64_C(1) << 2)
+#define VA_RUNTIME_FEATURE_FIRE_ARMING (UINT64_C(1) << 3)
 
 typedef struct VaHidCalibrationProfile {
     int32_t schema_version;
@@ -53,6 +60,17 @@ typedef struct VaRuntimeAction {
     double target_y;
 } VaRuntimeAction;
 
+typedef struct VaRuntimeAbiInfo {
+    uint32_t struct_size;
+    uint32_t abi_major;
+    uint32_t abi_minor;
+    uint32_t runtime_action_size;
+    uint32_t hid_calibration_profile_size;
+    uint32_t reserved;
+    uint64_t feature_flags;
+} VaRuntimeAbiInfo;
+
+VA_API int32_t va_get_abi_info(VaRuntimeAbiInfo* info);
 VA_API VaRuntime* va_create(void);
 VA_API void va_destroy(VaRuntime* runtime);
 VA_API const char* va_last_error(VaRuntime* runtime);

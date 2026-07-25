@@ -144,6 +144,24 @@ void validate_and_open(VaRuntime* runtime) {
 
 extern "C" {
 
+int32_t va_get_abi_info(VaRuntimeAbiInfo* info) {
+    if (info == nullptr || info->struct_size < sizeof(VaRuntimeAbiInfo)) {
+        return -1;
+    }
+    *info = VaRuntimeAbiInfo{};
+    info->struct_size = sizeof(VaRuntimeAbiInfo);
+    info->abi_major = VA_RUNTIME_ABI_MAJOR;
+    info->abi_minor = VA_RUNTIME_ABI_MINOR;
+    info->runtime_action_size = sizeof(VaRuntimeAction);
+    info->hid_calibration_profile_size = sizeof(VaHidCalibrationProfile);
+    info->feature_flags =
+        VA_RUNTIME_FEATURE_TENSORRT_CACHE |
+        VA_RUNTIME_FEATURE_PERSISTENT_CALIBRATION |
+        VA_RUNTIME_FEATURE_OUTPUT_ARMING |
+        VA_RUNTIME_FEATURE_FIRE_ARMING;
+    return 0;
+}
+
 VaRuntime* va_create(void) {
     try {
         return new VaRuntime{};

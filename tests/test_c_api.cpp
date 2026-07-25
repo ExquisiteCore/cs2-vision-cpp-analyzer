@@ -7,7 +7,9 @@
 #include "vision_analyzer/vision_runtime_c_api.h"
 
 static_assert(VA_HID_CALIBRATION_LEVELS == 3);
+static_assert(sizeof(VaRuntimeAction) == 120);
 static_assert(sizeof(VaHidCalibrationProfile) == 84);
+static_assert(sizeof(VaRuntimeAbiInfo) == 32);
 
 namespace {
 
@@ -15,6 +17,28 @@ void require(bool condition, const char* message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+void test_runtime_abi_info() {
+    require(va_get_abi_info(nullptr) == -1, "null ABI output must fail");
+
+    VaRuntimeAbiInfo info{};
+    info.struct_size = sizeof(info);
+    require(va_get_abi_info(&info) == 0, "ABI query should succeed");
+    require(info.abi_major == 2 && info.abi_minor == 0,
+            "DLL must expose ABI 2.0");
+    require(info.runtime_action_size == sizeof(VaRuntimeAction),
+            "action size must match the public header");
+    require(info.hid_calibration_profile_size == sizeof(VaHidCalibrationProfile),
+            "calibration size must match the public header");
+    require((info.feature_flags & VA_RUNTIME_FEATURE_TENSORRT_CACHE) != 0,
+            "TensorRT cache feature must be declared");
+    require((info.feature_flags & VA_RUNTIME_FEATURE_PERSISTENT_CALIBRATION) != 0,
+            "persistent calibration feature must be declared");
+    require((info.feature_flags & VA_RUNTIME_FEATURE_OUTPUT_ARMING) != 0,
+            "output arming feature must be declared");
+    require((info.feature_flags & VA_RUNTIME_FEATURE_FIRE_ARMING) != 0,
+            "fire arming feature must be declared");
 }
 
 std::filesystem::path c_api_calibration_test_directory() {
@@ -211,6 +235,7 @@ void test_invalid_video_open_reports_error() {
 
 int main() {
     try {
+        test_runtime_abi_info();
         test_create_destroy();
         test_setters_accept_valid_values();
         test_tensorrt_cache_setter_rejects_empty_path();
