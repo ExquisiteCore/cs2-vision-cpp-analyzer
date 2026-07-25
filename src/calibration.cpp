@@ -329,6 +329,37 @@ CalibrationAxisDiscovery discover_calibration_axis(
     throw std::runtime_error("HID calibration discovery exhausted its attempt budget");
 }
 
+int select_calibration_sample_retry_count(
+    int current_counts,
+    double main_shift_px,
+    double phase_response,
+    double target_shift_px,
+    double minimum_measurable_shift_px,
+    double maximum_reliable_shift_px
+) {
+    if (current_counts < kCalibrationProbeMinimumCounts ||
+        current_counts > kCalibrationProbeMaximumCounts ||
+        !std::isfinite(main_shift_px) || main_shift_px < 0.0 ||
+        !std::isfinite(phase_response) ||
+        !std::isfinite(target_shift_px) || target_shift_px <= 0.0 ||
+        !std::isfinite(minimum_measurable_shift_px) || minimum_measurable_shift_px <= 0.0 ||
+        !std::isfinite(maximum_reliable_shift_px) ||
+        maximum_reliable_shift_px <= minimum_measurable_shift_px) {
+        throw std::invalid_argument("invalid HID calibration sample retry values");
+    }
+    if (phase_response < kCalibrationMinimumPhaseResponse &&
+        main_shift_px >= minimum_measurable_shift_px &&
+        main_shift_px <= maximum_reliable_shift_px) {
+        return current_counts;
+    }
+    return adjust_calibration_probe_count(
+        current_counts,
+        main_shift_px,
+        target_shift_px,
+        kCalibrationProbeMaximumCounts
+    );
+}
+
 HidCalibrationProfile run_hid_calibration(const Options& options) {
     apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     std::unique_ptr<std::ofstream> owned_stream;
@@ -360,11 +391,41 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
             "failed to capture baseline DXGI frame for HID calibration"
         );
         const cv::Size frame_size = baseline.image.size();
-        const std::array<int, kHidCalibrationLevels> initial_counts = {16, 40, 80};
-        const std::array<double, kHidCalibrationLevels> target_shifts = {8.0, 32.0, 80.0};
+        const auto measure_balanced_probe = [&](std::size_t axis, int signed_counts) {
+            const int dx = axis == 0 ? signed_counts : 0;
+            const int dy = axis == 1 ? signed_counts : 0;
+            send_move(dx, dy);
+            bool inverse_required = true;
+            try {
+                wait_for_settle();
+                CapturedFrame moved = capture(
+                    "failed to capture moved DXGI frame for HID calibration"
+                );
+                const VisualShiftEstimate estimate = estimate_visual_shift_with_response(
+                    baseline.image,
+                    moved.image
+                );
+                send_move(-dx, -dy);
+                inverse_required = false;
+                wait_for_settle();
+                baseline = capture(
+                    "failed to capture returned DXGI frame after HID calibration probe"
+                );
+                return estimate;
+            } catch (...) {
+                if (inverse_required) {
+                    try {
+                        send_move(-dx, -dy);
+                    } catch (...) {
+                    }
+                }
+                throw;
+            }
+        };
 
         output << "calibration"
-               << " levels=16,40,80"
+               << " probe_max_counts=" << kCalibrationProbeMaximumCounts
+               << " runtime_max_step=" << kCalibrationRuntimeMaxStep
                << " repeats=" << options.calibration_repeats
                << " noise_samples=" << options.calibration_noise_samples
                << " settle_ms=" << options.calibration_settle_ms
@@ -408,64 +469,89 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
         const double maximum_reliable_shift =
             static_cast<double>(std::min(frame_size.width, frame_size.height)) * 0.25;
 
+        const double minimum_discovery_shift = std::max(4.0, 3.0 * noise_px);
+        std::array<CalibrationAxisDiscovery, 2> discoveries;
+        for (std::size_t axis = 0; axis < discoveries.size(); ++axis) {
+            int attempt = 0;
+            discoveries[axis] = discover_calibration_axis(
+                axis,
+                minimum_discovery_shift,
+                minimum_measurable_shift,
+                maximum_reliable_shift,
+                [&](int counts) {
+                    const VisualShiftEstimate estimate = measure_balanced_probe(axis, counts);
+                    const double main = std::abs(
+                        axis == 0 ? estimate.shift.x : estimate.shift.y
+                    );
+                    const double cross = std::abs(
+                        axis == 0 ? estimate.shift.y : estimate.shift.x
+                    );
+                    output << "probe_discovery axis=" << (axis == 0 ? 'x' : 'y')
+                           << " attempt=" << attempt++
+                           << " counts=" << counts
+                           << " shift_px=" << main
+                           << " cross_px=" << cross
+                           << " response=" << estimate.response << '\n';
+                    return estimate;
+                }
+            );
+            const auto& counts = discoveries[axis].levels.counts;
+            output << "probe_levels axis=" << (axis == 0 ? 'x' : 'y')
+                   << " counts=" << counts[0] << ',' << counts[1] << ',' << counts[2]
+                   << " probe_max=" << kCalibrationProbeMaximumCounts << '\n';
+        }
+
         for (std::size_t axis = 0; axis < 2; ++axis) {
             for (std::size_t level = 0; level < kHidCalibrationLevels; ++level) {
                 for (int repeat = 0; repeat < options.calibration_repeats; ++repeat) {
                     for (int sign : {1, -1}) {
-                        int command_counts = initial_counts[level] * sign;
-                        int dx = axis == 0 ? command_counts : 0;
-                        int dy = axis == 1 ? command_counts : 0;
-                        send_move(dx, dy);
-                        wait_for_settle();
-                        CapturedFrame moved = capture(
-                            "failed to capture moved DXGI frame for HID calibration"
-                        );
-                        VisualShiftEstimate estimate = estimate_visual_shift_with_response(
-                            baseline.image,
-                            moved.image
+                        int absolute_counts = discoveries[axis].levels.counts[level];
+                        int command_counts = absolute_counts * sign;
+                        VisualShiftEstimate estimate = measure_balanced_probe(
+                            axis,
+                            command_counts
                         );
                         double main_magnitude = std::abs(
                             axis == 0 ? estimate.shift.x : estimate.shift.y
                         );
-
-                        if (std::isfinite(main_magnitude) &&
+                        const bool finite_measurement =
+                            std::isfinite(main_magnitude) && std::isfinite(estimate.response);
+                        const bool bad_range = finite_measurement &&
                             (main_magnitude < minimum_measurable_shift ||
-                             main_magnitude > maximum_reliable_shift)) {
-                            send_move(-dx, -dy);
-                            wait_for_settle();
-                            baseline = capture(
-                                "failed to capture returned DXGI frame before calibration retry"
-                            );
+                             main_magnitude > maximum_reliable_shift);
+                        const bool bad_response = finite_measurement &&
+                            estimate.response < kCalibrationMinimumPhaseResponse;
 
-                            command_counts = sign * adjust_calibration_probe_count(
-                                std::abs(command_counts),
+                        if (bad_range || bad_response) {
+                            absolute_counts = select_calibration_sample_retry_count(
+                                absolute_counts,
                                 main_magnitude,
-                                target_shifts[level]
+                                estimate.response,
+                                discoveries[axis].levels.target_shift_px[level],
+                                minimum_measurable_shift,
+                                maximum_reliable_shift
                             );
-                            dx = axis == 0 ? command_counts : 0;
-                            dy = axis == 1 ? command_counts : 0;
+                            command_counts = absolute_counts * sign;
                             output << "probe_retry"
                                    << " axis=" << (axis == 0 ? 'x' : 'y')
                                    << " level=" << level
                                    << " repeat=" << repeat
                                    << " counts=" << command_counts
                                    << " observed_shift=" << main_magnitude
+                                   << " response=" << estimate.response
+                                   << " reason=" << (bad_range ? "range" : "response")
                                    << '\n';
-
-                            send_move(dx, dy);
-                            wait_for_settle();
-                            moved = capture(
-                                "failed to capture retried DXGI frame for HID calibration"
-                            );
-                            estimate = estimate_visual_shift_with_response(
-                                baseline.image,
-                                moved.image
+                            estimate = measure_balanced_probe(
+                                axis,
+                                command_counts
                             );
                             main_magnitude = std::abs(
                                 axis == 0 ? estimate.shift.x : estimate.shift.y
                             );
                         }
 
+                        const int dx = axis == 0 ? command_counts : 0;
+                        const int dy = axis == 1 ? command_counts : 0;
                         samples.push_back({
                             dx,
                             dy,
@@ -484,12 +570,6 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
                                << " visual_shift_y=" << estimate.shift.y
                                << " response=" << estimate.response
                                << '\n';
-
-                        send_move(-dx, -dy);
-                        wait_for_settle();
-                        baseline = capture(
-                            "failed to capture returned DXGI frame after calibration probe"
-                        );
                     }
                 }
             }
@@ -498,7 +578,7 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
         const HidCalibrationProfile profile = fit_adaptive_hid_calibration(
             samples,
             frame_size,
-            120
+            kCalibrationRuntimeMaxStep
         );
         output << "fit"
                << " valid=" << (profile.valid ? 1 : 0)
