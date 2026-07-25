@@ -1446,6 +1446,31 @@ void test_center_flow_rejects_one_spatial_cell() {
             "one-cell rejection should preserve useful support diagnostics");
 }
 
+void test_center_flow_burst_selects_most_supported_candidate() {
+    const std::size_t selected = select_center_flow_candidate({
+        CenterFlowEstimate{{0.0, 0.0}, 80, 60, 0, 0, 0.0, false},
+        CenterFlowEstimate{{-11.8, 0.2}, 90, 70, 38, 7, 0.6, true},
+        CenterFlowEstimate{{-12.1, 0.1}, 90, 72, 29, 6, 0.3, true},
+    });
+
+    require(selected == 1,
+            "burst selection should prefer more distributed reliable inliers");
+}
+
+void test_center_flow_burst_rejects_without_reliable_candidate() {
+    bool rejected = false;
+    try {
+        (void)select_center_flow_candidate({
+            CenterFlowEstimate{{0.0, 0.0}, 0, 0, 0, 0, 0.0, false},
+            CenterFlowEstimate{{1.0, 0.0}, 10, 8, 8, 1, 0.2, false},
+        });
+    } catch (const std::runtime_error& error) {
+        rejected = std::string(error.what()).find("center flow") != std::string::npos;
+    }
+    require(rejected,
+            "burst selection must reject when no center flow is reliable");
+}
+
 void test_robust_visual_shift_requires_multiple_textured_regions() {
     cv::Mat before(540, 960, CV_8UC3, cv::Scalar(32, 32, 32));
     cv::Mat after = before.clone();
@@ -2075,6 +2100,8 @@ int main() {
         test_center_flow_measures_scene_around_fixed_crosshair();
         test_center_flow_rejects_blank_center();
         test_center_flow_rejects_one_spatial_cell();
+        test_center_flow_burst_selects_most_supported_candidate();
+        test_center_flow_burst_rejects_without_reliable_candidate();
         test_robust_visual_shift_requires_multiple_textured_regions();
         test_robust_visual_shift_rejects_one_isolated_textured_region();
         test_visual_shift_estimate_preserves_phase_response();

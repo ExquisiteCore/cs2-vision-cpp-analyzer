@@ -512,6 +512,35 @@ CenterFlowEstimate estimate_center_flow(
     return result;
 }
 
+std::size_t select_center_flow_candidate(
+    const std::vector<CenterFlowEstimate>& candidates
+) {
+    std::size_t selected = candidates.size();
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        const CenterFlowEstimate& candidate = candidates[index];
+        if (!candidate.reliable) {
+            continue;
+        }
+        if (selected == candidates.size()) {
+            selected = index;
+            continue;
+        }
+        const CenterFlowEstimate& current = candidates[selected];
+        if (candidate.inlier_features > current.inlier_features ||
+            (candidate.inlier_features == current.inlier_features &&
+             candidate.occupied_cells > current.occupied_cells) ||
+            (candidate.inlier_features == current.inlier_features &&
+             candidate.occupied_cells == current.occupied_cells &&
+             candidate.spread_px < current.spread_px)) {
+            selected = index;
+        }
+    }
+    if (selected == candidates.size()) {
+        throw std::runtime_error("no reliable center flow candidate");
+    }
+    return selected;
+}
+
 VisualShiftEstimate estimate_calibration_axis_shift(
     const cv::Mat& before,
     const cv::Mat& after,

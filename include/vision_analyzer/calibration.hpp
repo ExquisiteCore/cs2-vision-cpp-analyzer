@@ -127,6 +127,9 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     const cv::Mat& before,
     const cv::Mat& after
 );
+[[nodiscard]] std::size_t select_center_flow_candidate(
+    const std::vector<CenterFlowEstimate>& candidates
+);
 [[nodiscard]] VisualShiftEstimate estimate_calibration_axis_shift(
     const cv::Mat& before,
     const cv::Mat& after,
