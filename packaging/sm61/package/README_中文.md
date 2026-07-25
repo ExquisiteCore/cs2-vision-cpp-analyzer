@@ -70,6 +70,11 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\collect-diagno
 头文件和导入库位于 `app`。Python 包装位于 `python\cs2_vision_runtime`，无第三方
 Python 依赖；本压缩包不捆绑 Python 解释器。
 
+把 Python SDK 冻结进调用端 EXE、生成同级 `vision_runtime.dll` 和
+`resources\vision-runtime` 的正式流程见
+[`docs\PYTHON_RUNTIME_SDK_INTEGRATION.md`](docs/PYTHON_RUNTIME_SDK_INTEGRATION.md)。本包内
+命令主要用于环境诊断和硬件验收。
+
 宿主必须按以下顺序调用：
 
 1. 设置模型、RP2350 串口和玩家阵营。
@@ -106,11 +111,10 @@ python .\examples\runtime_live_move.py --hid-port COM4 --player-side ct --calibr
 加载包内 CUDA 11.8、cuDNN 8.9、TensorRT 8.6.1.6 和 MSVC 私有运行库，不需要
 修改系统 PATH。按 `Ctrl+C` 会通过 `finally` 撤销开火和移动输出。
 
-第一次运行且本地文件不存在时，示例会为 X、Y 两个方向寻找可测量的探测档位。低灵敏度
-设置可能短暂出现较明显的左右、上下转动，探测最高可到 2048 counts；每次探测后都会
-立即发送精确反向移动归位。2048 只用于标定，标定通过后的正常瞄准仍严格限制为
-`max_step=120`。多区域测量会忽略下方武器/HUD和中央准星，单个坏画面只在原档重试；
-中高档仍不可用时只会逐步向下降档，绝不会放大到更高 counts。正常首次完成时会看到：
+第一次运行且本地文件不存在时，DLL 会在中心 ROI 内用光流测量 X、Y 两个方向的视角
+位移。标定探测和正式采样都限制在最多 120 counts，每个移出动作都会立即发送精确反向
+移动归位；标定通过后的正常瞄准同样受 `max_step=120` 限制。中心 ROI 光流会避开下方
+武器/HUD并使用多区域一致性过滤坏画面。正常首次完成时会看到：
 
 ```text
 probe_levels axis=x counts=...
@@ -121,9 +125,9 @@ DXGI 已打开
 ```
 
 关闭进程后用同一条命令再次运行，应先看到“已加载本地标定，不移动鼠标”，随后直接打开
-DXGI。只有调用端明确增加 `--recalibrate` 才会再次执行受控标定移动。如果两轮探测直到
-2048 都没有 coherent 视觉移动，DLL 会报告 `HID calibration input not ready` 并保留旧
-profile；此时应检查游戏是否接收输入、画面是否稳定，而不是继续扩大运行输出。
+DXGI。只有调用端明确增加 `--recalibrate` 才会再次执行受控标定移动。如果 120 counts
+范围内仍无法得到一致的中心场景位移，DLL 会报告 `HID calibration input not ready` 并
+保留旧 profile；此时应检查游戏是否接收输入、画面是否稳定，而不是继续扩大运行输出。
 
 本次更新不需要重新刷 RP2350 固件，也不改变现有 ORT 1.17.3、TensorRT 8.6.1.6、
 CUDA 11.8、cuDNN 8.9.7 环境。

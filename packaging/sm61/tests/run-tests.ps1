@@ -490,10 +490,13 @@ try {
             'get_hid_calibration',
             '--calibration-path',
             '--recalibrate',
-            'max_step=120'
+            'max_step=120',
+            '120 counts',
+            'PYTHON_RUNTIME_SDK_INTEGRATION.md'
         )) {
             Assert-True ($readme.Contains($token)) "package README must document $token"
         }
+        Assert-True ($readme -notmatch '(?i)2048\s+counts') 'package README must not describe the retired 2048-count probe'
 
         $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
         $cApiHeader = Get-Content -LiteralPath `
@@ -507,7 +510,12 @@ try {
         foreach ($relative in @(
             'python\cs2_vision_runtime\__init__.py',
             'python\cs2_vision_runtime\runtime.py',
-            'examples\runtime_live_move.py'
+            'python\cs2_vision_runtime\_version.py',
+            'python\cs2_vision_runtime\errors.py',
+            'python\cs2_vision_runtime\package.py',
+            'examples\runtime_live_move.py',
+            'examples\runtime_dxgi_dryrun.py',
+            'docs\PYTHON_RUNTIME_SDK_INTEGRATION.md'
         )) {
             Assert-True ($common.Contains($relative)) "static package verification must require $relative"
         }
@@ -649,6 +657,8 @@ try {
             'PythonProjectRoot',
             'src\cs2_vision_runtime',
             'examples\runtime_live_move.py',
+            'examples\runtime_dxgi_dryrun.py',
+            'docs\PYTHON_RUNTIME_SDK_INTEGRATION.md',
             'python\cs2_vision_runtime',
             'Assert-Rp2350ProtocolV2Binary',
             'rp2350-hid-sdk',
