@@ -619,6 +619,108 @@ std::array<CalibrationSample, 2> make_calibration_round_trip_samples(
     };
 }
 
+bool usable_calibration_round_trip(
+    std::size_t axis,
+    const CalibrationRoundTripMeasurement& measurement,
+    double minimum_shift_px,
+    double maximum_shift_px
+) {
+    if (axis > 1 || !std::isfinite(minimum_shift_px) ||
+        !std::isfinite(maximum_shift_px) || minimum_shift_px <= 0.0 ||
+        maximum_shift_px <= minimum_shift_px) {
+        throw std::invalid_argument("invalid HID calibration round-trip limits");
+    }
+
+    const auto usable_leg = [&](const VisualShiftEstimate& estimate) {
+        if (!estimate.coherent || !std::isfinite(estimate.shift.x) ||
+            !std::isfinite(estimate.shift.y) || !std::isfinite(estimate.response) ||
+            estimate.response < kCalibrationMinimumPhaseResponse) {
+            return false;
+        }
+        const double main_shift = axis == 0 ? estimate.shift.x : estimate.shift.y;
+        const double cross_shift = axis == 0 ? estimate.shift.y : estimate.shift.x;
+        const double main_magnitude = std::abs(main_shift);
+        return main_magnitude >= minimum_shift_px &&
+               main_magnitude <= maximum_shift_px &&
+               std::abs(cross_shift) <= main_magnitude * 0.35;
+    };
+    if (!usable_leg(measurement.outward) || !usable_leg(measurement.inverse)) {
+        return false;
+    }
+    const double outward_main =
+        axis == 0 ? measurement.outward.shift.x : measurement.outward.shift.y;
+    const double inverse_main =
+        axis == 0 ? measurement.inverse.shift.x : measurement.inverse.shift.y;
+    return std::signbit(outward_main) != std::signbit(inverse_main);
+}
+
+CalibrationLevelSelection select_calibration_level(
+    std::size_t axis,
+    int level,
+    int previous_count,
+    int planned_count,
+    double minimum_shift_px,
+    double maximum_shift_px,
+    const CalibrationLevelMeasure& measure
+) {
+    if (axis > 1 || level < 0 || level >= static_cast<int>(kHidCalibrationLevels) ||
+        previous_count < 0 || planned_count <= previous_count ||
+        planned_count > kCalibrationProbeMaximumCounts || !measure) {
+        throw std::invalid_argument("invalid HID calibration level selection values");
+    }
+
+    CalibrationLevelSelection selection;
+    const auto try_count = [&](int counts) {
+        selection.attempted_counts.push_back(counts);
+        const std::vector<CalibrationRoundTripMeasurement> measured = measure(counts);
+        std::vector<CalibrationRoundTripMeasurement> usable;
+        for (const CalibrationRoundTripMeasurement& measurement : measured) {
+            if (usable_calibration_round_trip(
+                    axis,
+                    measurement,
+                    minimum_shift_px,
+                    maximum_shift_px
+                )) {
+                usable.push_back(measurement);
+            }
+        }
+        if (usable.empty()) {
+            return false;
+        }
+        selection.accepted = true;
+        selection.counts = counts;
+        selection.measurements = std::move(usable);
+        return true;
+    };
+
+    if (try_count(planned_count) || try_count(planned_count)) {
+        return selection;
+    }
+
+    if (level > 0) {
+        int candidate = planned_count;
+        for (int fallback = 0;
+             fallback < kCalibrationMaximumDownwardLevelCandidates;
+             ++fallback) {
+            const int next = previous_count + (candidate - previous_count) / 2;
+            if (next <= previous_count || next >= candidate) {
+                break;
+            }
+            candidate = next;
+            if (try_count(candidate)) {
+                return selection;
+            }
+        }
+    }
+
+    std::ostringstream message;
+    message << "HID calibration level unavailable: axis="
+            << (axis == 0 ? 'x' : 'y')
+            << " level=" << level
+            << " planned_counts=" << planned_count;
+    throw std::runtime_error(message.str());
+}
+
 HidCalibrationProfile run_hid_calibration(const Options& options) {
     apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     std::unique_ptr<std::ofstream> owned_stream;

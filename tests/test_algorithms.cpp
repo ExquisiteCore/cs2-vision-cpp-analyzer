@@ -998,6 +998,137 @@ void test_round_trip_sampling_can_recover_from_one_bad_path() {
     require(profile.max_step == 120, "round-trip fitting must retain the runtime clamp");
 }
 
+CalibrationRoundTripMeasurement coherent_axis_round_trip(
+    std::size_t axis,
+    double shift
+) {
+    if (axis == 0) {
+        return {
+            {{-shift, 0.1}, 0.80, true},
+            {{shift, -0.1}, 0.82, true},
+        };
+    }
+    return {
+        {{0.1, -shift}, 0.80, true},
+        {{-0.1, shift}, 0.82, true},
+    };
+}
+
+CalibrationRoundTripMeasurement incoherent_axis_round_trip() {
+    return {
+        {{0.0, 0.0}, 0.0, false},
+        {{0.0, 0.0}, 0.0, false},
+    };
+}
+
+void test_calibration_level_selection_falls_back_strictly_downward() {
+    std::vector<int> attempted;
+    const CalibrationLevelSelection selection = select_calibration_level(
+        0,
+        2,
+        33,
+        66,
+        1.5,
+        270.0,
+        [&](int counts) {
+            attempted.push_back(counts);
+            if (counts == 49) {
+                return std::vector<CalibrationRoundTripMeasurement>{
+                    coherent_axis_round_trip(0, 34.0),
+                    coherent_axis_round_trip(0, 34.2),
+                };
+            }
+            return std::vector<CalibrationRoundTripMeasurement>{
+                incoherent_axis_round_trip(),
+                incoherent_axis_round_trip(),
+            };
+        }
+    );
+
+    require(selection.accepted && selection.counts == 49,
+            "failed high level should select the first coherent midpoint");
+    require(attempted == std::vector<int>({66, 66, 49}),
+            "planned high count should retry once before falling downward");
+    require(selection.measurements.size() == 2,
+            "selection should retain coherent round trips only");
+    require(selection.counts > 33 && selection.counts < 66,
+            "fallback must remain between the previous and planned levels");
+}
+
+void test_calibration_level_selection_never_shrinks_the_low_level() {
+    std::vector<int> attempted;
+    bool rejected = false;
+    try {
+        (void)select_calibration_level(
+            0,
+            0,
+            0,
+            11,
+            1.5,
+            270.0,
+            [&](int counts) {
+                attempted.push_back(counts);
+                return std::vector<CalibrationRoundTripMeasurement>{
+                    incoherent_axis_round_trip(),
+                };
+            }
+        );
+    } catch (const std::runtime_error& error) {
+        rejected = std::string(error.what()).find("level=0") != std::string::npos;
+    }
+    require(rejected, "unusable low level should report a bounded level error");
+    require(attempted == std::vector<int>({11, 11}),
+            "low level should retry only its original measurable count");
+}
+
+void test_calibration_level_selection_has_bounded_distinct_midpoints() {
+    std::vector<int> attempted;
+    bool rejected = false;
+    try {
+        (void)select_calibration_level(
+            1,
+            2,
+            33,
+            96,
+            1.5,
+            270.0,
+            [&](int counts) {
+                attempted.push_back(counts);
+                return std::vector<CalibrationRoundTripMeasurement>{
+                    incoherent_axis_round_trip(),
+                };
+            }
+        );
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    require(rejected, "exhausted downward candidates should reject the level");
+    require(attempted.size() <=
+                static_cast<std::size_t>(
+                    2 + kCalibrationMaximumDownwardLevelCandidates
+                ),
+            "fallback should have a fixed candidate budget");
+    for (const int counts : attempted) {
+        require(counts > 33 && counts <= 96,
+                "fallback must never rise or collide with the previous level");
+    }
+    require(kCalibrationRuntimeMaxStep == 120,
+            "final-level recovery must not alter the runtime clamp");
+}
+
+void test_calibration_round_trip_usability_requires_both_opposite_legs() {
+    CalibrationRoundTripMeasurement measurement = coherent_axis_round_trip(0, 24.0);
+    require(usable_calibration_round_trip(0, measurement, 1.5, 270.0),
+            "coherent opposite legs should be usable");
+    measurement.inverse.coherent = false;
+    require(!usable_calibration_round_trip(0, measurement, 1.5, 270.0),
+            "one incoherent return leg should reject the round trip");
+    measurement = coherent_axis_round_trip(0, 24.0);
+    measurement.inverse.shift.x = -24.0;
+    require(!usable_calibration_round_trip(0, measurement, 1.5, 270.0),
+            "same-direction visual legs should not fill opposite signed buckets");
+}
+
 cv::Mat make_textured_calibration_scene(const cv::Size& size) {
     cv::Mat scene(size, CV_8UC3);
     cv::RNG random(0x2350);
@@ -1682,6 +1813,10 @@ int main() {
         test_round_trip_command_plan_alternates_without_final_escalation();
         test_round_trip_samples_assign_real_signed_legs();
         test_round_trip_sampling_can_recover_from_one_bad_path();
+        test_calibration_level_selection_falls_back_strictly_downward();
+        test_calibration_level_selection_never_shrinks_the_low_level();
+        test_calibration_level_selection_has_bounded_distinct_midpoints();
+        test_calibration_round_trip_usability_requires_both_opposite_legs();
         test_robust_visual_shift_ignores_static_overlay_and_blank_tile();
         test_robust_visual_shift_requires_multiple_textured_regions();
         test_robust_visual_shift_rejects_one_isolated_textured_region();

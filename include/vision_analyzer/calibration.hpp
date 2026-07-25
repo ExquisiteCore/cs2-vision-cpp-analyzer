@@ -45,6 +45,7 @@ constexpr int kCalibrationProbeMaximumCounts = 2048;
 constexpr int kCalibrationDiscoveryMaximumAttempts = 8;
 constexpr int kCalibrationProbeMeasurementsPerCount = 3;
 constexpr int kCalibrationDiscoverySweeps = 2;
+constexpr int kCalibrationMaximumDownwardLevelCandidates = 4;
 constexpr int kCalibrationRuntimeMaxStep = 120;
 constexpr double kCalibrationMinimumPhaseResponse = 0.15;
 
@@ -73,8 +74,17 @@ struct CalibrationRoundTripCommand {
     int outward_counts = 0;
 };
 
+struct CalibrationLevelSelection {
+    bool accepted = false;
+    int counts = 0;
+    std::vector<int> attempted_counts;
+    std::vector<CalibrationRoundTripMeasurement> measurements;
+};
+
 using CalibrationProbeMeasure = std::function<CalibrationRoundTripMeasurement(int)>;
 using CalibrationDiscoveryPause = std::function<void()>;
+using CalibrationLevelMeasure =
+    std::function<std::vector<CalibrationRoundTripMeasurement>(int)>;
 
 struct CalibrationFit {
     bool valid = false;
@@ -120,6 +130,21 @@ make_calibration_round_trip_samples(
     int level,
     int outward_counts,
     const CalibrationRoundTripMeasurement& measurement
+);
+[[nodiscard]] bool usable_calibration_round_trip(
+    std::size_t axis,
+    const CalibrationRoundTripMeasurement& measurement,
+    double minimum_shift_px,
+    double maximum_shift_px
+);
+[[nodiscard]] CalibrationLevelSelection select_calibration_level(
+    std::size_t axis,
+    int level,
+    int previous_count,
+    int planned_count,
+    double minimum_shift_px,
+    double maximum_shift_px,
+    const CalibrationLevelMeasure& measure
 );
 [[nodiscard]] int adjust_calibration_probe_count(
     int current_counts,
