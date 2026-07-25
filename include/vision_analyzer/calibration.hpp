@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <functional>
 #include <iosfwd>
 #include <vector>
@@ -44,6 +45,21 @@ struct CalibrationLevelPlan {
     std::array<double, kHidCalibrationLevels> target_shift_px{};
 };
 
+struct CalibrationProbePlan {
+    bool accepted = false;
+    bool exhausted = false;
+    int next_counts = 0;
+};
+
+struct CalibrationAxisDiscovery {
+    int probe_counts = 0;
+    double probe_shift_px = 0.0;
+    double counts_per_pixel = 0.0;
+    CalibrationLevelPlan levels;
+};
+
+using CalibrationProbeMeasure = std::function<VisualShiftEstimate(int)>;
+
 struct CalibrationFit {
     bool valid = false;
     double hid_gain = 1.0;
@@ -73,6 +89,22 @@ void print_pointer_settings(std::ostream& output, const PointerSettings& setting
     double counts_per_pixel,
     double minimum_measurable_shift_px,
     int maximum_counts = kCalibrationProbeMaximumCounts
+);
+[[nodiscard]] CalibrationProbePlan plan_calibration_probe(
+    int current_counts,
+    int attempt_index,
+    double main_shift_px,
+    double cross_shift_px,
+    double phase_response,
+    double minimum_discovery_shift_px,
+    double maximum_reliable_shift_px
+);
+[[nodiscard]] CalibrationAxisDiscovery discover_calibration_axis(
+    std::size_t axis,
+    double minimum_discovery_shift_px,
+    double minimum_measurable_shift_px,
+    double maximum_reliable_shift_px,
+    const CalibrationProbeMeasure& measure
 );
 [[nodiscard]] CalibrationFit fit_hid_calibration(
     const std::vector<CalibrationSample>& samples,

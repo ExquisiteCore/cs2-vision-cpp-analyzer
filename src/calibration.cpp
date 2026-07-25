@@ -204,6 +204,131 @@ CalibrationLevelPlan derive_calibration_level_plan(
     return plan;
 }
 
+CalibrationProbePlan plan_calibration_probe(
+    int current_counts,
+    int attempt_index,
+    double main_shift_px,
+    double cross_shift_px,
+    double phase_response,
+    double minimum_discovery_shift_px,
+    double maximum_reliable_shift_px
+) {
+    if (current_counts < kCalibrationProbeMinimumCounts ||
+        current_counts > kCalibrationProbeMaximumCounts || attempt_index < 0 ||
+        !std::isfinite(main_shift_px) || main_shift_px < 0.0 ||
+        !std::isfinite(cross_shift_px) || cross_shift_px < 0.0 ||
+        !std::isfinite(phase_response) ||
+        !std::isfinite(minimum_discovery_shift_px) || minimum_discovery_shift_px <= 0.0 ||
+        !std::isfinite(maximum_reliable_shift_px) ||
+        maximum_reliable_shift_px <= minimum_discovery_shift_px) {
+        throw std::invalid_argument("invalid HID calibration discovery values");
+    }
+
+    const bool last_attempt =
+        attempt_index + 1 >= kCalibrationDiscoveryMaximumAttempts;
+    if (main_shift_px > maximum_reliable_shift_px) {
+        const int reduced = adjust_calibration_probe_count(
+            current_counts,
+            main_shift_px,
+            8.0,
+            kCalibrationProbeMaximumCounts
+        );
+        if (last_attempt || reduced >= current_counts) {
+            return {false, true, current_counts};
+        }
+        return {false, false, reduced};
+    }
+
+    if (phase_response >= kCalibrationMinimumPhaseResponse &&
+        main_shift_px >= minimum_discovery_shift_px) {
+        if (cross_shift_px > main_shift_px * 0.35) {
+            return {false, true, current_counts};
+        }
+        return {true, false, current_counts};
+    }
+
+    if (last_attempt || current_counts >= kCalibrationProbeMaximumCounts) {
+        return {false, true, current_counts};
+    }
+
+    int proposed = std::min(
+        current_counts * 2,
+        kCalibrationProbeMaximumCounts
+    );
+    if (phase_response >= kCalibrationMinimumPhaseResponse && main_shift_px >= 0.5) {
+        proposed = adjust_calibration_probe_count(
+            current_counts,
+            main_shift_px,
+            8.0,
+            kCalibrationProbeMaximumCounts
+        );
+    }
+    const int next = std::clamp(
+        std::max(current_counts + 1, proposed),
+        kCalibrationProbeMinimumCounts,
+        kCalibrationProbeMaximumCounts
+    );
+    return {false, next <= current_counts, next};
+}
+
+CalibrationAxisDiscovery discover_calibration_axis(
+    std::size_t axis,
+    double minimum_discovery_shift_px,
+    double minimum_measurable_shift_px,
+    double maximum_reliable_shift_px,
+    const CalibrationProbeMeasure& measure
+) {
+    if (axis > 1 || !measure) {
+        throw std::invalid_argument("invalid HID calibration discovery axis or callback");
+    }
+
+    int counts = 16;
+    std::array<int, kCalibrationDiscoveryMaximumAttempts> attempted{};
+    for (int attempt = 0; attempt < kCalibrationDiscoveryMaximumAttempts; ++attempt) {
+        if (std::find(attempted.begin(), attempted.begin() + attempt, counts) !=
+            attempted.begin() + attempt) {
+            throw std::runtime_error("HID calibration discovery repeated a probe count");
+        }
+        attempted[attempt] = counts;
+
+        const VisualShiftEstimate estimate = measure(counts);
+        const double main_shift_px = std::abs(axis == 0 ? estimate.shift.x : estimate.shift.y);
+        const double cross_shift_px = std::abs(axis == 0 ? estimate.shift.y : estimate.shift.x);
+        const CalibrationProbePlan plan = plan_calibration_probe(
+            counts,
+            attempt,
+            main_shift_px,
+            cross_shift_px,
+            estimate.response,
+            minimum_discovery_shift_px,
+            maximum_reliable_shift_px
+        );
+        if (plan.accepted) {
+            const double counts_per_pixel = static_cast<double>(counts) / main_shift_px;
+            return CalibrationAxisDiscovery{
+                counts,
+                main_shift_px,
+                counts_per_pixel,
+                derive_calibration_level_plan(
+                    counts_per_pixel,
+                    minimum_measurable_shift_px
+                ),
+            };
+        }
+        if (plan.exhausted) {
+            std::ostringstream message;
+            message << "HID calibration discovery exhausted: axis="
+                    << (axis == 0 ? 'x' : 'y')
+                    << " max_counts=" << kCalibrationProbeMaximumCounts
+                    << " shift_px=" << main_shift_px
+                    << " response=" << estimate.response;
+            throw std::runtime_error(message.str());
+        }
+        counts = plan.next_counts;
+    }
+    throw std::runtime_error("HID calibration discovery exhausted its attempt budget");
+}
+
 HidCalibrationProfile run_hid_calibration(const Options& options) {
     apply_dxgi_gpu_preference(options.dxgi_gpu_preference);
     std::unique_ptr<std::ofstream> owned_stream;

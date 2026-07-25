@@ -755,6 +755,72 @@ void test_calibration_level_plan_rejects_unmeasurable_range() {
     require(rejected, "an unmeasurable 2048-count range must be rejected explicitly");
 }
 
+void test_calibration_probe_planner_escalates_low_response() {
+    const CalibrationProbePlan plan = plan_calibration_probe(
+        120, 0, 2.0, 0.1, 0.05, 4.0, 270.0
+    );
+    require(!plan.accepted && !plan.exhausted,
+            "low-response probe should continue discovery");
+    require(plan.next_counts == 240,
+            "unreliable discovery should double instead of trusting its shift");
+}
+
+void test_calibration_probe_planner_accepts_signal_and_rejects_cross_axis() {
+    const CalibrationProbePlan accepted = plan_calibration_probe(
+        1000, 1, 8.0, 0.2, 0.80, 4.0, 270.0
+    );
+    require(accepted.accepted && !accepted.exhausted,
+            "reliable discovery signal should be accepted");
+
+    const CalibrationProbePlan crossed = plan_calibration_probe(
+        1000, 1, 8.0, 4.0, 0.80, 4.0, 270.0
+    );
+    require(!crossed.accepted && crossed.exhausted,
+            "dominant cross-axis movement should reject the scene without escalating");
+}
+
+void test_calibration_axis_discovery_derives_low_sensitivity_levels() {
+    std::vector<int> attempted;
+    const CalibrationAxisDiscovery discovery = discover_calibration_axis(
+        0,
+        4.0,
+        1.5,
+        270.0,
+        [&](int counts) {
+            attempted.push_back(counts);
+            return VisualShiftEstimate{{-static_cast<double>(counts) / 60.0, 0.05}, 0.90};
+        }
+    );
+    require(attempted == std::vector<int>({16, 32, 480}),
+            "subpixel signal should double before using proportional probe scaling");
+    require(discovery.probe_counts == 480, "discovery should retain the accepted count");
+    require(discovery.levels.counts == std::array<int, 3>{480, 1024, 2048},
+            "discovery should derive compressed low-sensitivity levels");
+}
+
+void test_calibration_axis_discovery_reports_probe_exhaustion() {
+    std::vector<int> attempted;
+    bool rejected = false;
+    try {
+        (void)discover_calibration_axis(
+            0,
+            4.0,
+            1.5,
+            270.0,
+            [&](int counts) {
+                attempted.push_back(counts);
+                return VisualShiftEstimate{{0.0, 0.0}, 0.0};
+            }
+        );
+    } catch (const std::runtime_error& error) {
+        rejected = std::string(error.what()).find("axis=x") != std::string::npos &&
+                   std::string(error.what()).find("2048") != std::string::npos;
+    }
+    require(rejected, "exhaustion must report the axis and calibration limit");
+    require(!attempted.empty() && attempted.back() == 2048,
+            "discovery should test the agreed limit before rejecting");
+}
+
 void test_visual_shift_estimate_preserves_phase_response() {
     cv::Mat image(64, 64, CV_32F);
     cv::randu(image, 0.0F, 255.0F);
@@ -1177,6 +1243,10 @@ int main() {
         test_calibration_probe_adjustment_uses_calibration_only_limit();
         test_calibration_level_plan_compresses_low_sensitivity_range();
         test_calibration_level_plan_rejects_unmeasurable_range();
+        test_calibration_probe_planner_escalates_low_response();
+        test_calibration_probe_planner_accepts_signal_and_rejects_cross_axis();
+        test_calibration_axis_discovery_derives_low_sensitivity_levels();
+        test_calibration_axis_discovery_reports_probe_exhaustion();
         test_visual_shift_estimate_preserves_phase_response();
         test_runtime_config_file_overrides_tuning_and_io();
         test_runtime_options_reject_invalid_fire_policy();

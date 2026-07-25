@@ -258,8 +258,8 @@ void test_calibration_axis_discovery_derives_low_sensitivity_levels() {
             return VisualShiftEstimate{{-static_cast<double>(counts) / 60.0, 0.05}, 0.90};
         }
     );
-    require(attempted == std::vector<int>({16, 480}),
-            "reliable small signal should jump proportionally to an eight-pixel probe");
+    require(attempted == std::vector<int>({16, 32, 480}),
+            "subpixel signal should double before using proportional probe scaling");
     require(discovery.probe_counts == 480, "discovery should retain the accepted count");
     require(discovery.levels.counts == std::array<int, 3>{480, 1024, 2048},
             "discovery should derive compressed low-sensitivity levels");
