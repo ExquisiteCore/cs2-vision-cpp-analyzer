@@ -806,11 +806,14 @@ try {
         $content = Get-Content -LiteralPath $example -Raw
         foreach ($token in @(
             'calibrate_hid',
-            'HidSession',
+            'from rp2350_hid_bridge import HidSession',
+            'from cs2_vision_runtime import VisionRuntime',
             'VisionRuntime.from_app_dir',
-            'hid_session=hid',
-            'with runtime.armed_output',
-            'hid.stop_all()',
+            'vision.attach_hid_session',
+            'board.native_handle',
+            'hid_dll_path=board.dll_path',
+            'with vision.armed_output',
+            'board.stop_all()',
             'finally',
             '--enable-live-output',
             '--app-dir',
@@ -821,6 +824,8 @@ try {
         )) {
             Assert-True ($content.Contains($token)) "Python live example must contain $token"
         }
+        Assert-True (-not $content.Contains('from cs2_vision_runtime import HidSession')) 'vision SDK must not re-export the HID SDK'
+        Assert-True (-not $content.Contains('hid_session=')) 'vision factory must not accept a concrete HID Python object'
         Assert-True (-not $content.Contains('runtime.stop_all()')) 'vision cleanup must not globally release caller input'
         Assert-True (-not $content.Contains('set_hid_port')) 'shared-session example must not open a private HID port'
 
