@@ -69,8 +69,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\collect-diagno
 ## 接入 DLL
 
 两套头文件、导入库和 DLL 位于 `app`。Python 包装分别位于
-`python\cs2_vision_runtime` 与 `python\rp2350_hid_bridge`；前者依赖后者，
-本压缩包不捆绑 Python 解释器。
+`python\cs2_vision_runtime` 与 `python\rp2350_hid_bridge`；它们是由主控分别安装的两个
+独立 Python SDK，Vision wheel 保持零依赖。本压缩包不捆绑 Python 解释器。
 
 把 Python SDK 冻结进调用端 EXE、生成同级 `vision_runtime.dll`、
 `rp2350_hid_bridge.dll` 和
@@ -80,15 +80,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\collect-diagno
 
 宿主必须按以下顺序调用：
 
-1. 调用端创建一个 `HidSession` 打开 RP2350 串口，并通过
-   `va_attach_hid_session` 把同一个原生会话附加给视觉运行时。
+1. 主控创建一个 `HidSession` 打开 RP2350 串口，再调用
+   `vision.attach_hid_session(board.native_handle, hid_dll_path=board.dll_path)`，把同一个原生
+   会话附加给视觉运行时；底层对应 `va_attach_hid_session`。
 2. 调用 `set_hid_calibration_path("hid-calibration.json")` 选择一个本地文件。
 3. 调用 `get_hid_calibration()`；只有返回的 `valid` 为假时，才在已进入对局且
    画面稳定的场景调用 `calibrate_hid()`。
 4. 设置头/身体开火策略，再打开 DXGI。
 5. 分别调用 `set_output_enabled(True)` 和 `set_fire_enabled(True)`。
 6. 视觉暂停时只关闭开火和移动输出，不释放调用端保持的键；只有整个控制会话
-   结束或需要紧急全局释放时才调用 `hid.stop_all()`。
+   结束或需要紧急全局释放时才调用 `board.stop_all()`。
 
 对应 C API 是 `va_set_hid_calibration_path`、`va_get_hid_calibration` 和现有的
 `va_calibrate_hid`。第一次成功标定会先完整校验候选 profile，再原子写入文件，最后
