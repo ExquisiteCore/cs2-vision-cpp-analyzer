@@ -246,10 +246,6 @@ try {
                 abi_major = 1
                 abi_minor = 0
             }
-            python_sdk = [pscustomobject][ordered]@{
-                minimum = '0.2.0'
-                recommended = '0.2.0'
-            }
         }
         model = [pscustomobject][ordered]@{
             path = 'model/best.onnx'

@@ -762,8 +762,9 @@ try {
         Assert-Equal 'rp2350_hid_bridge.dll' $manifest.hid_bridge.dll.file_name 'HID DLL filename'
         Assert-Equal 1 $manifest.hid_bridge.dll.abi_major 'HID ABI major'
         Assert-Equal 0 $manifest.hid_bridge.dll.abi_minor 'HID ABI minor'
-        Assert-Equal '0.2.0' $manifest.hid_bridge.python_sdk.minimum 'minimum HID Python SDK version'
-        Assert-Equal '0.2.0' $manifest.hid_bridge.python_sdk.recommended 'recommended HID Python SDK version'
+        Assert-True `
+            ($null -eq $manifest.hid_bridge.PSObject.Properties['python_sdk']) `
+            'vision runtime manifest must not own the HID Python SDK version'
         Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $output 'rp2350_hid_bridge.dll')) ([string]$manifest.hid_bridge.dll.sha256) 'HID DLL hash'
         Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $resources 'model\best.onnx')) ([string]$manifest.model.sha256) 'model hash'
         Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $resources 'model\best.onnx.schema.json')) ([string]$manifest.model.schema_sha256) 'schema hash'
