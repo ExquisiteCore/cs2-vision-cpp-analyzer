@@ -805,18 +805,23 @@ try {
         $content = Get-Content -LiteralPath $example -Raw
         foreach ($token in @(
             'calibrate_hid',
-            'set_output_enabled',
-            'set_fire_enabled',
+            'HidSession',
+            'VisionRuntime.from_app_dir',
+            'hid_session=hid',
+            'with runtime.armed_output',
+            'hid.stop_all()',
             'finally',
             '--enable-live-output',
+            '--app-dir',
             '--calibration-path',
             '--recalibrate',
             'set_hid_calibration_path',
-            'get_hid_calibration',
-            'ROOT / "model"'
+            'get_hid_calibration'
         )) {
             Assert-True ($content.Contains($token)) "Python live example must contain $token"
         }
+        Assert-True (-not $content.Contains('runtime.stop_all()')) 'vision cleanup must not globally release caller input'
+        Assert-True (-not $content.Contains('set_hid_port')) 'shared-session example must not open a private HID port'
 
         $wrapper = Join-Path $resolvedPythonRoot 'src\cs2_vision_runtime\runtime.py'
         Assert-True (Test-Path -LiteralPath $wrapper -PathType Leaf) 'Python runtime wrapper must exist'
