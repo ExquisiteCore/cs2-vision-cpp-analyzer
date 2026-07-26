@@ -425,8 +425,10 @@ int32_t va_calibrate_hid(
         if (runtime->session.is_open()) {
             throw std::runtime_error("close the runtime session before HID calibration");
         }
-        if (runtime->options.hid_port.empty()) {
-            throw std::runtime_error("HID calibration requires a configured HID port");
+        if (runtime->options.hid_port.empty() &&
+            runtime->options.hid_session == nullptr) {
+            throw std::runtime_error(
+                "HID calibration requires a configured port or attached session");
         }
         if (adapter < 0 || output < 0) {
             throw std::runtime_error("DXGI adapter and output must be greater than or equal to 0");
@@ -486,6 +488,10 @@ int32_t va_process_next(VaRuntime* runtime, VaRuntimeAction* action) {
 
 int32_t va_stop_all(VaRuntime* runtime) {
     return call_api(runtime, [&] {
+        if (runtime->attached_hid_session != nullptr) {
+            throw std::runtime_error(
+                "shared HID session is owned by the caller; use hid.stop_all()");
+        }
         runtime->session.stop_all();
     });
 }

@@ -1579,6 +1579,22 @@ void test_runtime_options_reject_invalid_fire_policy() {
     require(rejected, "runtime options should reject fire confidence above one");
 }
 
+void test_runtime_options_accept_shared_hid_and_reject_dual_configuration() {
+    Options options;
+    options.player_side = PlayerSide::Ct;
+    options.hid_session = reinterpret_cast<Rp2350HidSession*>(1);
+    validate_options(options);
+
+    options.hid_port = "COM4";
+    bool rejected = false;
+    try {
+        validate_options(options);
+    } catch (const std::runtime_error& error) {
+        rejected = std::string(error.what()).find("not both") != std::string::npos;
+    }
+    require(rejected, "runtime options must reject private and shared HID together");
+}
+
 void test_aim_controller_holds_when_no_target() {
     AimController controller;
     FrameReport report{};
@@ -1949,17 +1965,14 @@ public:
     bool throw_on_stop = false;
 };
 
-void test_hid_close_continues_after_stop_failure() {
+void test_hid_close_does_not_issue_global_stop() {
     RecordingHidClient client;
-    client.throw_on_stop = true;
-
     close_hid_client_noexcept(&client);
-
-    require(client.stop_calls == 1, "shutdown must attempt STOP_ALL once");
-    require(client.close_calls == 1, "shutdown must close after STOP_ALL failure");
+    require(client.stop_calls == 0, "client close must not issue shared STOP_ALL");
+    require(client.close_calls == 1, "client close must release its reference");
 }
 
-void test_hid_action_sender_requires_arming_and_stops_when_disarmed() {
+void test_hid_action_sender_disarms_without_global_stop() {
     RecordingHidClient client;
     HidActionSender sender(client);
     const AimCommand command{
@@ -1983,7 +1996,13 @@ void test_hid_action_sender_requires_arming_and_stops_when_disarmed() {
     require(client.left_clicks == 1, "HID sender should forward click command");
 
     sender.set_enabled(false);
-    require(client.stop_calls == 1, "disarming should immediately stop RP2350 state");
+    require(
+        client.stop_calls == 0,
+        "disarming vision output must preserve caller-owned keyboard state");
+    sender.execute(command);
+    require(
+        client.moves.size() == 1,
+        "disarmed sender must suppress subsequent movement");
 }
 
 void test_runtime_session_starts_closed() {
@@ -2108,6 +2127,7 @@ int main() {
         test_visual_shift_estimate_preserves_phase_response();
         test_runtime_config_file_overrides_tuning_and_io();
         test_runtime_options_reject_invalid_fire_policy();
+        test_runtime_options_accept_shared_hid_and_reject_dual_configuration();
         test_calibrated_hid_curve_interpolates_signed_gain();
         test_calibrated_hid_curve_supports_inverted_axis_deadzone_and_clamp();
         test_aim_controller_holds_when_no_target();
@@ -2124,8 +2144,8 @@ int main() {
         test_fire_cooldown_and_disable_reset();
         test_rp2350_v2_health_accepts_required_capabilities();
         test_rp2350_v2_health_rejects_legacy_or_incomplete_devices();
-        test_hid_close_continues_after_stop_failure();
-        test_hid_action_sender_requires_arming_and_stops_when_disarmed();
+        test_hid_close_does_not_issue_global_stop();
+        test_hid_action_sender_disarms_without_global_stop();
         test_runtime_session_starts_closed();
         test_runtime_status_includes_parseable_timing_metrics();
         std::cout << "algorithm tests passed\n";

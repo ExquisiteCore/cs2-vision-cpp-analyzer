@@ -68,6 +68,12 @@ void test_shared_hid_session_attachment_and_port_exclusion() {
         va_attach_hid_session(runtime, hid) == 0,
         "runtime should retain an attached HID handle");
     require(
+        va_stop_all(runtime) == -1,
+        "shared runtime must reject its legacy global stop API");
+    require(
+        std::strstr(va_last_error(runtime), "hid.stop_all") != nullptr,
+        "shared stop error should direct Python ownership to HidSession");
+    require(
         va_set_hid_port(runtime, "COM4") == -1,
         "attached session and private port must be mutually exclusive");
     require(

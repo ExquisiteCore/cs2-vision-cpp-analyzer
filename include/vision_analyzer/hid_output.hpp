@@ -9,6 +9,8 @@
 
 #include "vision_analyzer/aim_controller.hpp"
 
+struct Rp2350HidSession;
+
 namespace vision_analyzer {
 
 struct HidDeviceHealth {
@@ -48,5 +50,8 @@ private:
 };
 
 [[nodiscard]] std::unique_ptr<HidClient> create_rp2350_hid_client(const std::string& port);
+[[nodiscard]] std::unique_ptr<HidClient> create_rp2350_hid_client(
+    Rp2350HidSession* session
+);
 
 }  // namespace vision_analyzer

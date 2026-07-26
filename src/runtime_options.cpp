@@ -51,12 +51,19 @@ void validate_options(const Options& options) {
         !std::isfinite(options.tuning.kalman_error_covariance) || options.tuning.kalman_error_covariance <= 0.0F) {
         throw std::runtime_error("Kalman tuning values must be finite and greater than 0");
     }
+    const bool has_private_hid = !options.hid_port.empty();
+    const bool has_shared_hid = options.hid_session != nullptr;
+    if (has_private_hid && has_shared_hid) {
+        throw std::runtime_error(
+            "configure either a private HID port or an attached HID session, not both");
+    }
     if (options.list_dxgi_outputs || options.probe_dxgi_outputs || options.verify_input) {
         return;
     }
     if (options.test_hid_move) {
-        if (options.hid_port.empty()) {
-            throw std::runtime_error("--test-hid-move requires --hid-port COMx");
+        if (!has_private_hid && !has_shared_hid) {
+            throw std::runtime_error(
+                "--test-hid-move requires a HID port or attached HID session");
         }
         return;
     }
@@ -64,8 +71,9 @@ void validate_options(const Options& options) {
         if (options.input_source != InputSource::Dxgi) {
             throw std::runtime_error("--calibrate-hid requires DXGI input");
         }
-        if (options.hid_port.empty()) {
-            throw std::runtime_error("--calibrate-hid requires --hid-port COMx");
+        if (!has_private_hid && !has_shared_hid) {
+            throw std::runtime_error(
+                "--calibrate-hid requires a HID port or attached HID session");
         }
         if (options.calibration_step_counts <= 0 || options.calibration_repeats < 2 ||
             options.calibration_noise_samples < 0 || options.calibration_settle_ms < 0) {
@@ -73,8 +81,10 @@ void validate_options(const Options& options) {
         }
         return;
     }
-    if (options.hid_port.empty() && !options.dry_run) {
-        throw std::runtime_error("use --hid-port COMx for live SDK output or --dry-run for tuning");
+    if (!has_private_hid && !has_shared_hid && !options.dry_run) {
+        throw std::runtime_error(
+            "configure a HID port or attached HID session for live output, "
+            "or use --dry-run for tuning");
     }
     if (!options.dry_run && options.player_side == PlayerSide::Unknown) {
         throw std::runtime_error("live SDK output requires --player-side ct or --player-side t");

@@ -1039,7 +1039,9 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
     auto frame_source = create_frame_source(options);
     std::unique_ptr<HidClient> hid_client;
     try {
-        hid_client = create_rp2350_hid_client(options.hid_port);
+        hid_client = options.hid_session != nullptr
+            ? create_rp2350_hid_client(options.hid_session)
+            : create_rp2350_hid_client(options.hid_port);
         const auto wait_for_settle = [&] {
             std::this_thread::sleep_for(std::chrono::milliseconds(options.calibration_settle_ms));
         };
@@ -1401,16 +1403,11 @@ HidCalibrationProfile run_hid_calibration(const Options& options) {
             throw std::runtime_error(message.str());
         }
 
-        hid_client->stop_all();
+        close_hid_client_noexcept(hid_client.get());
         frame_source->release();
         return profile;
     } catch (...) {
-        if (hid_client) {
-            try {
-                hid_client->stop_all();
-            } catch (...) {
-            }
-        }
+        close_hid_client_noexcept(hid_client.get());
         try {
             frame_source->release();
         } catch (...) {
