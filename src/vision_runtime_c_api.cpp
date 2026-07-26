@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "rp2350_hid_bridge/c_api.h"
 #include "vision_analyzer/calibration.hpp"
 #include "vision_analyzer/detector.hpp"
 #include "vision_analyzer/hid_calibration_store.hpp"
@@ -20,6 +21,14 @@ struct VaRuntime {
     vision_analyzer::RuntimeSession session;
     std::filesystem::path hid_calibration_path;
     std::string last_error;
+    Rp2350HidSession* attached_hid_session = nullptr;
+
+    ~VaRuntime() {
+        session.close();
+        if (attached_hid_session != nullptr) {
+            rp2350_hid_session_release(attached_hid_session);
+        }
+    }
 };
 
 namespace {
@@ -49,6 +58,17 @@ std::string required_string(const char* value, const char* name) {
         throw std::runtime_error(std::string(name) + " must not be empty");
     }
     return value;
+}
+
+void check_hid_status(int32_t status) {
+    if (status == RP2350_HID_STATUS_OK) {
+        return;
+    }
+    const char* message = rp2350_hid_last_error();
+    throw std::runtime_error(
+        message == nullptr || message[0] == '\0'
+            ? "RP2350 HID session operation failed"
+            : message);
 }
 
 int32_t lock_state_to_int(vision_analyzer::LockState state) {
@@ -158,7 +178,8 @@ int32_t va_get_abi_info(VaRuntimeAbiInfo* info) {
         VA_RUNTIME_FEATURE_TENSORRT_CACHE |
         VA_RUNTIME_FEATURE_PERSISTENT_CALIBRATION |
         VA_RUNTIME_FEATURE_OUTPUT_ARMING |
-        VA_RUNTIME_FEATURE_FIRE_ARMING;
+        VA_RUNTIME_FEATURE_FIRE_ARMING |
+        VA_RUNTIME_FEATURE_SHARED_HID_SESSION;
     return 0;
 }
 
@@ -219,7 +240,38 @@ int32_t va_set_player_side(VaRuntime* runtime, const char* side) {
 
 int32_t va_set_hid_port(VaRuntime* runtime, const char* port) {
     return call_api(runtime, [&] {
-        runtime->options.hid_port = port == nullptr ? std::string{} : std::string(port);
+        const std::string candidate =
+            port == nullptr ? std::string{} : std::string(port);
+        if (!candidate.empty() && runtime->attached_hid_session != nullptr) {
+            throw std::runtime_error(
+                "HID port cannot be set while an attached HID session is configured");
+        }
+        runtime->options.hid_port = candidate;
+    });
+}
+
+int32_t va_attach_hid_session(
+    VaRuntime* runtime,
+    Rp2350HidSession* session) {
+    return call_api(runtime, [&] {
+        if (runtime->session.is_open()) {
+            throw std::runtime_error(
+                "HID session attachment cannot change while runtime is open");
+        }
+        if (session != nullptr && !runtime->options.hid_port.empty()) {
+            throw std::runtime_error(
+                "HID session cannot be attached while a private HID port is configured");
+        }
+
+        if (session != nullptr) {
+            check_hid_status(rp2350_hid_session_retain(session));
+        }
+        Rp2350HidSession* previous = runtime->attached_hid_session;
+        runtime->attached_hid_session = session;
+        runtime->options.hid_session = session;
+        if (previous != nullptr) {
+            rp2350_hid_session_release(previous);
+        }
     });
 }
 

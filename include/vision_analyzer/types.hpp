@@ -8,6 +8,8 @@
 
 #include "vision_analyzer/hid_calibration_profile.hpp"
 
+struct Rp2350HidSession;
+
 namespace vision_analyzer {
 
 constexpr int kInputSize = 640;
@@ -75,6 +77,7 @@ struct Options {
     bool probe_dxgi_outputs = false;
     bool verify_input = false;
     std::string hid_port;
+    Rp2350HidSession* hid_session = nullptr;
     float hid_move_gain = 1.0F;
     int hid_max_step = 120;
     float hid_deadzone_px = 1.5F;

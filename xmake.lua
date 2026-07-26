@@ -60,6 +60,21 @@ local function copy_ort_runtime(target)
     end
 end
 
+if has_hid_sdk then
+    target("rp2350_hid_bridge_native")
+        set_kind("shared")
+        set_basename("rp2350_hid_bridge")
+        add_files(path.join(hid_sdk_root, "src/c_api.cpp"))
+        add_files(path.join(hid_sdk_root, "src/client.cpp"))
+        add_files(path.join(hid_sdk_root, "src/port_discovery.cpp"))
+        add_includedirs(path.join(hid_sdk_root, "include"), {public = true})
+        add_defines("RP2350_HID_BRIDGE_BUILD_DLL")
+        if is_plat("windows") then
+            add_syslinks("setupapi")
+            add_cxflags("/utf-8")
+        end
+end
+
 target("vision_analyzer_core")
     set_kind("static")
     add_includedirs("include", {public = true})
@@ -74,7 +89,7 @@ target("vision_analyzer_core")
         add_links("onnxruntime", {public = true})
     end
     if has_hid_sdk then
-        add_includedirs(hid_sdk_include, {public = true})
+        add_deps("rp2350_hid_bridge_native")
         add_defines("VISION_ANALYZER_WITH_RP2350_HID", {public = true})
     end
     if is_plat("windows") then
@@ -86,6 +101,9 @@ target("vision_analyzer")
     set_kind("binary")
     add_files("src/main.cpp")
     add_deps("vision_analyzer_core")
+    if has_hid_sdk then
+        add_deps("rp2350_hid_bridge_native")
+    end
     add_runtime_runenvs()
     if is_plat("windows") then
         add_cxflags("/utf-8")
@@ -96,6 +114,9 @@ target("vision_runtime")
     set_kind("shared")
     add_files("src/vision_runtime_c_api.cpp")
     add_deps("vision_analyzer_core")
+    if has_hid_sdk then
+        add_deps("rp2350_hid_bridge_native")
+    end
     add_defines("VISION_RUNTIME_BUILD_DLL")
     add_includedirs("include", {public = true})
     add_runtime_runenvs()
@@ -108,6 +129,9 @@ target("vision_analyzer_tests")
     set_kind("binary")
     add_files("tests/test_algorithms.cpp")
     add_deps("vision_analyzer_core")
+    if has_hid_sdk then
+        add_deps("rp2350_hid_bridge_native")
+    end
     add_runtime_runenvs()
     if is_plat("windows") then
         add_cxflags("/utf-8")
@@ -117,6 +141,9 @@ target("vision_runtime_c_api_tests")
     set_kind("binary")
     add_files("tests/test_c_api.cpp")
     add_deps("vision_runtime")
+    if has_hid_sdk then
+        add_deps("rp2350_hid_bridge_native")
+    end
     add_runtime_runenvs()
     if is_plat("windows") then
         add_cxflags("/utf-8")

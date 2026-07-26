@@ -13,15 +13,17 @@ extern "C" {
 #endif
 
 typedef struct VaRuntime VaRuntime;
+typedef struct Rp2350HidSession Rp2350HidSession;
 
 #define VA_HID_CALIBRATION_LEVELS 3
 #define VA_RUNTIME_ABI_MAJOR 2u
-#define VA_RUNTIME_ABI_MINOR 0u
+#define VA_RUNTIME_ABI_MINOR 1u
 
 #define VA_RUNTIME_FEATURE_TENSORRT_CACHE UINT64_C(1)
 #define VA_RUNTIME_FEATURE_PERSISTENT_CALIBRATION (UINT64_C(1) << 1)
 #define VA_RUNTIME_FEATURE_OUTPUT_ARMING (UINT64_C(1) << 2)
 #define VA_RUNTIME_FEATURE_FIRE_ARMING (UINT64_C(1) << 3)
+#define VA_RUNTIME_FEATURE_SHARED_HID_SESSION (UINT64_C(1) << 4)
 
 typedef struct VaHidCalibrationProfile {
     int32_t schema_version;
@@ -82,6 +84,10 @@ VA_API int32_t va_set_backend(VaRuntime* runtime, const char* backend);
 VA_API int32_t va_set_tensorrt_cache_path(VaRuntime* runtime, const char* path);
 VA_API int32_t va_set_player_side(VaRuntime* runtime, const char* side);
 VA_API int32_t va_set_hid_port(VaRuntime* runtime, const char* port);
+VA_API int32_t va_attach_hid_session(
+    VaRuntime* runtime,
+    Rp2350HidSession* session
+);
 VA_API int32_t va_set_dry_run(VaRuntime* runtime, int32_t dry_run);
 VA_API int32_t va_set_output_enabled(VaRuntime* runtime, int32_t enabled);
 VA_API int32_t va_set_fire_enabled(VaRuntime* runtime, int32_t enabled);

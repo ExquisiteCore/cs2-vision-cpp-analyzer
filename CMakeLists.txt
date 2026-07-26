@@ -61,12 +61,17 @@ if(EXISTS "${ONNXRUNTIME_ROOT}/include" AND EXISTS "${ONNXRUNTIME_ROOT}/lib")
     target_link_libraries(vision_analyzer_core PUBLIC onnxruntime)
 endif()
 
-if(EXISTS "${HID_SDK_ROOT}/include")
-    find_package(Threads REQUIRED)
-    target_compile_definitions(vision_analyzer_core PUBLIC VISION_ANALYZER_WITH_RP2350_HID)
-    target_include_directories(vision_analyzer_core PUBLIC "${HID_SDK_ROOT}/include")
-    target_link_libraries(vision_analyzer_core PUBLIC Threads::Threads)
+if(NOT EXISTS "${HID_SDK_ROOT}/CMakeLists.txt")
+    message(FATAL_ERROR "RP2350 HID SDK is missing: ${HID_SDK_ROOT}")
 endif()
+set(RP2350_HID_BRIDGE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(
+    "${HID_SDK_ROOT}"
+    "${CMAKE_BINARY_DIR}/rp2350_hid_bridge"
+    EXCLUDE_FROM_ALL
+)
+target_compile_definitions(vision_analyzer_core PUBLIC VISION_ANALYZER_WITH_RP2350_HID)
+target_link_libraries(vision_analyzer_core PUBLIC rp2350_hid_bridge)
 
 if(WIN32)
     target_link_libraries(vision_analyzer_core PUBLIC d3d11 dxgi)
@@ -88,6 +93,14 @@ function(vision_analyzer_copy_ort_runtime target_name)
     endif()
 endfunction()
 
+function(vision_analyzer_copy_hid_runtime target_name)
+    add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:rp2350_hid_bridge>
+                $<TARGET_FILE_DIR:${target_name}>
+    )
+endfunction()
+
 vision_analyzer_enable_utf8(vision_analyzer_core)
 
 add_library(vision_runtime SHARED src/vision_runtime_c_api.cpp)
@@ -96,20 +109,27 @@ target_include_directories(vision_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/in
 target_link_libraries(vision_runtime PRIVATE vision_analyzer_core)
 vision_analyzer_enable_utf8(vision_runtime)
 vision_analyzer_copy_ort_runtime(vision_runtime)
+vision_analyzer_copy_hid_runtime(vision_runtime)
 
 add_executable(vision_analyzer src/main.cpp)
 target_link_libraries(vision_analyzer PRIVATE vision_analyzer_core)
 vision_analyzer_enable_utf8(vision_analyzer)
 vision_analyzer_copy_ort_runtime(vision_analyzer)
+vision_analyzer_copy_hid_runtime(vision_analyzer)
 
 if(BUILD_TESTING)
     add_executable(vision_analyzer_tests tests/test_algorithms.cpp)
     target_link_libraries(vision_analyzer_tests PRIVATE vision_analyzer_core)
     vision_analyzer_enable_utf8(vision_analyzer_tests)
+    vision_analyzer_copy_hid_runtime(vision_analyzer_tests)
     add_test(NAME vision_analyzer_tests COMMAND vision_analyzer_tests)
 
     add_executable(vision_runtime_c_api_tests tests/test_c_api.cpp)
-    target_link_libraries(vision_runtime_c_api_tests PRIVATE vision_runtime)
+    target_link_libraries(
+        vision_runtime_c_api_tests
+        PRIVATE vision_runtime rp2350_hid_bridge
+    )
     vision_analyzer_enable_utf8(vision_runtime_c_api_tests)
+    vision_analyzer_copy_hid_runtime(vision_runtime_c_api_tests)
     add_test(NAME vision_runtime_c_api_tests COMMAND vision_runtime_c_api_tests)
 endif()

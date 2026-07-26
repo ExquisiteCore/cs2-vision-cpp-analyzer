@@ -4,8 +4,11 @@
 #include <iostream>
 #include <stdexcept>
 
+#include "rp2350_hid_bridge/c_api.h"
 #include "vision_analyzer/vision_runtime_c_api.h"
 
+static_assert(VA_RUNTIME_ABI_MAJOR == 2u);
+static_assert(VA_RUNTIME_ABI_MINOR == 1u);
 static_assert(VA_HID_CALIBRATION_LEVELS == 3);
 static_assert(sizeof(VaRuntimeAction) == 120);
 static_assert(sizeof(VaHidCalibrationProfile) == 84);
@@ -25,8 +28,8 @@ void test_runtime_abi_info() {
     VaRuntimeAbiInfo info{};
     info.struct_size = sizeof(info);
     require(va_get_abi_info(&info) == 0, "ABI query should succeed");
-    require(info.abi_major == 2 && info.abi_minor == 0,
-            "DLL must expose ABI 2.0");
+    require(info.abi_major == 2 && info.abi_minor == 1,
+            "DLL must expose ABI 2.1");
     require(info.runtime_action_size == sizeof(VaRuntimeAction),
             "action size must match the public header");
     require(info.hid_calibration_profile_size == sizeof(VaHidCalibrationProfile),
@@ -39,6 +42,58 @@ void test_runtime_abi_info() {
             "output arming feature must be declared");
     require((info.feature_flags & VA_RUNTIME_FEATURE_FIRE_ARMING) != 0,
             "fire arming feature must be declared");
+    require((info.feature_flags & VA_RUNTIME_FEATURE_SHARED_HID_SESSION) != 0,
+            "shared HID session feature must be declared");
+    require(info.feature_flags == 31,
+            "ABI 2.1 must expose the coordinated feature set");
+}
+
+void test_shared_hid_session_attachment_and_port_exclusion() {
+    Rp2350HidOptions options{};
+    options.struct_size = sizeof(options);
+    options.port = "COM_TEST";
+    options.baud = 115200;
+    options.timeout_ms = 1000;
+    options.retries = 2;
+    options.heartbeat_interval_ms = 500;
+
+    Rp2350HidSession* hid = nullptr;
+    require(
+        rp2350_hid_session_create(&options, &hid) == 0,
+        "unopened HID handle should be creatable without hardware");
+
+    VaRuntime* runtime = va_create();
+    require(runtime != nullptr, "runtime should exist");
+    require(
+        va_attach_hid_session(runtime, hid) == 0,
+        "runtime should retain an attached HID handle");
+    require(
+        va_set_hid_port(runtime, "COM4") == -1,
+        "attached session and private port must be mutually exclusive");
+    require(
+        std::strstr(va_last_error(runtime), "attached HID session") != nullptr,
+        "port conflict should explain the attached session");
+    require(
+        va_close(runtime) == 0,
+        "reset should keep the configured attachment valid");
+    require(
+        va_attach_hid_session(runtime, nullptr) == 0,
+        "READY runtime should detach after reset");
+    require(
+        va_set_hid_port(runtime, "COM4") == 0,
+        "private port should be configurable after detach");
+    require(
+        va_attach_hid_session(runtime, hid) == -1,
+        "private port must reject a shared-session attachment");
+    require(
+        std::strstr(va_last_error(runtime), "private HID port") != nullptr,
+        "attachment conflict should explain the private port");
+    require(
+        va_set_hid_port(runtime, nullptr) == 0,
+        "private port should be clearable");
+
+    va_destroy(runtime);
+    rp2350_hid_session_release(hid);
 }
 
 std::filesystem::path c_api_calibration_test_directory() {
@@ -236,6 +291,7 @@ void test_invalid_video_open_reports_error() {
 int main() {
     try {
         test_runtime_abi_info();
+        test_shared_hid_session_attachment_and_port_exclusion();
         test_create_destroy();
         test_setters_accept_valid_values();
         test_tensorrt_cache_setter_rejects_empty_path();
