@@ -33,7 +33,8 @@ CUDA Toolkit。546.33 驱动足以加载本包的 CUDA 11.8 私有运行库。
 
 连接保持期间，SDK 每 500 ms 发送一次心跳。进程停止、串口断开、DTR 断开或心跳
 停止后，固件的两秒安全租约会释放保持中的键和鼠标按钮。包清单和组包流程都会拒绝
-旧协议 DLL，因此不要只替换 `vision_runtime.dll` 而保留旧清单。
+旧协议 DLL。`vision_runtime.dll` 和 `rp2350_hid_bridge.dll` 是一组协调版本，
+因此不要只替换其中一个 DLL 而保留旧清单。
 
 ## 单独测试当前屏幕
 
@@ -67,23 +68,27 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\collect-diagno
 
 ## 接入 DLL
 
-头文件和导入库位于 `app`。Python 包装位于 `python\cs2_vision_runtime`，无第三方
-Python 依赖；本压缩包不捆绑 Python 解释器。
+两套头文件、导入库和 DLL 位于 `app`。Python 包装分别位于
+`python\cs2_vision_runtime` 与 `python\rp2350_hid_bridge`；前者依赖后者，
+本压缩包不捆绑 Python 解释器。
 
-把 Python SDK 冻结进调用端 EXE、生成同级 `vision_runtime.dll` 和
+把 Python SDK 冻结进调用端 EXE、生成同级 `vision_runtime.dll`、
+`rp2350_hid_bridge.dll` 和
 `resources\vision-runtime` 的正式流程见
 [`docs\PYTHON_RUNTIME_SDK_INTEGRATION.md`](docs/PYTHON_RUNTIME_SDK_INTEGRATION.md)。本包内
 命令主要用于环境诊断和硬件验收。
 
 宿主必须按以下顺序调用：
 
-1. 设置模型、RP2350 串口和玩家阵营。
+1. 调用端创建一个 `HidSession` 打开 RP2350 串口，并通过
+   `va_attach_hid_session` 把同一个原生会话附加给视觉运行时。
 2. 调用 `set_hid_calibration_path("hid-calibration.json")` 选择一个本地文件。
 3. 调用 `get_hid_calibration()`；只有返回的 `valid` 为假时，才在已进入对局且
    画面稳定的场景调用 `calibrate_hid()`。
 4. 设置头/身体开火策略，再打开 DXGI。
 5. 分别调用 `set_output_enabled(True)` 和 `set_fire_enabled(True)`。
-6. 停止或异常退出时，依次关闭开火、关闭移动输出并调用 `stop_all()`。
+6. 视觉暂停时只关闭开火和移动输出，不释放调用端保持的键；只有整个控制会话
+   结束或需要紧急全局释放时才调用 `hid.stop_all()`。
 
 对应 C API 是 `va_set_hid_calibration_path`、`va_get_hid_calibration` 和现有的
 `va_calibrate_hid`。第一次成功标定会先完整校验候选 profile，再原子写入文件，最后

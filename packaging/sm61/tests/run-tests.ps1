@@ -90,6 +90,7 @@ function New-PortablePackageFixture {
         'config',
         'licenses\runtime',
         'python\cs2_vision_runtime',
+        'python\rp2350_hid_bridge',
         'examples',
         'logs',
         'cache'
@@ -99,6 +100,9 @@ function New-PortablePackageFixture {
 
     $files = [ordered]@{
         'app\vision_runtime.dll' = 'runtime-dll'
+        'app\rp2350_hid_bridge.dll' = 'RP2350 protocol v2 capabilities are required rp2350_hid_session_mouse_move'
+        'app\rp2350_hid_bridge.lib' = 'hid-import-library'
+        'app\rp2350_hid_bridge_c_api.h' = 'hid-c-api'
         'app\vision_analyzer.exe' = 'diagnostic-exe'
         'app\onnxruntime.dll' = 'ort-core'
         'app\onnxruntime_providers_shared.dll' = 'ort-shared'
@@ -113,6 +117,10 @@ function New-PortablePackageFixture {
         'config\runtime-sm61.cfg' = 'backend=ort-tensorrt'
         'licenses\runtime\NOTICE.txt' = 'license'
         'python\cs2_vision_runtime\runtime.py' = 'must-not-copy'
+        'python\rp2350_hid_bridge\__init__.py' = 'hid-python-init'
+        'python\rp2350_hid_bridge\_version.py' = '__version__ = "0.2.0"'
+        'python\rp2350_hid_bridge\native.py' = 'hid-native-loader'
+        'python\rp2350_hid_bridge\client.py' = 'hid-client'
         'examples\runtime_live_move.py' = 'must-not-copy'
         'logs\old.log' = 'must-not-copy'
         'cache\old.engine' = 'must-not-copy'
@@ -222,8 +230,8 @@ try {
             $current = [pscustomobject]@{
                 components = @([pscustomobject]@{
                     id = 'rp2350-hid-sdk'
-                    version = 'protocol-v2'
-                    sourceMode = 'header-only-build'
+                    version = 'abi-1.0-protocol-v2'
+                    sourceMode = 'shared-library'
                 })
             }
             Assert-Rp2350ProtocolV2Manifest -Manifest $current
@@ -298,13 +306,13 @@ try {
         [IO.File]::WriteAllText($legacyDll, 'legacy RP2350 HID runtime')
         [IO.File]::WriteAllText(
             $v2Dll,
-            'RP2350 protocol v2 capabilities are required'
+            'RP2350 protocol v2 capabilities are required rp2350_hid_session_mouse_move'
         )
 
         Assert-Throws {
-            Assert-Rp2350ProtocolV2Binary -LiteralPath $legacyDll
+            Assert-Rp2350SharedLibrary -LiteralPath $legacyDll
         } 'protocol v2' 'legacy HID release DLL must be rejected'
-        Assert-Rp2350ProtocolV2Binary -LiteralPath $v2Dll
+        Assert-Rp2350SharedLibrary -LiteralPath $v2Dll
     }
 
     Invoke-Test 'TensorRT 8.6.1.6 layout is accepted' {
@@ -508,11 +516,18 @@ try {
 
         $common = Get-Content -LiteralPath (Join-Path $templateRoot 'scripts\common.ps1') -Raw
         foreach ($relative in @(
+            'app\rp2350_hid_bridge.dll',
+            'app\rp2350_hid_bridge.lib',
+            'app\rp2350_hid_bridge_c_api.h',
             'python\cs2_vision_runtime\__init__.py',
             'python\cs2_vision_runtime\runtime.py',
             'python\cs2_vision_runtime\_version.py',
             'python\cs2_vision_runtime\errors.py',
             'python\cs2_vision_runtime\package.py',
+            'python\rp2350_hid_bridge\__init__.py',
+            'python\rp2350_hid_bridge\_version.py',
+            'python\rp2350_hid_bridge\native.py',
+            'python\rp2350_hid_bridge\client.py',
             'examples\runtime_live_move.py',
             'examples\runtime_dxgi_dryrun.py',
             'docs\PYTHON_RUNTIME_SDK_INTEGRATION.md'
@@ -546,11 +561,11 @@ try {
             ($cmake -match 'cmake_minimum_required\(VERSION 3\.20\)') `
             'CMake must match the SDK minimum version'
         Assert-True `
-            ($cmake.Contains('find_package(Threads REQUIRED)')) `
-            'CMake must resolve SDK thread support'
+            ($cmake.Contains('add_subdirectory(')) `
+            'CMake must build the shared HID SDK'
         Assert-True `
-            ($cmake.Contains('Threads::Threads')) `
-            'HID-enabled core must link the thread target'
+            ($cmake.Contains('target_link_libraries(vision_analyzer_core PUBLIC rp2350_hid_bridge)')) `
+            'vision core must link the shared HID library target'
         Assert-True `
             ($hidOutput.Contains('PROTOCOL_VERSION == kRp2350ProtocolV2')) `
             'the compiled runtime must reject an old SDK'
@@ -660,9 +675,14 @@ try {
             'examples\runtime_dxgi_dryrun.py',
             'docs\PYTHON_RUNTIME_SDK_INTEGRATION.md',
             'python\cs2_vision_runtime',
-            'Assert-Rp2350ProtocolV2Binary',
+            'python\rp2350_hid_bridge',
+            'rp2350_hid_bridge.dll',
+            'rp2350_hid_bridge.lib',
+            'rp2350_hid_bridge_c_api.h',
+            'Assert-Rp2350SharedLibrary',
             'rp2350-hid-sdk',
-            'protocol-v2'
+            'abi-1.0-protocol-v2',
+            'shared-library'
         )) {
             Assert-True ($content.Contains($token)) "builder must use $token"
         }
@@ -700,11 +720,12 @@ try {
         & $builder `
             -PortablePackageRoot $source `
             -OutputRoot $output `
-            -PythonSdkVersion '0.2.0'
+            -PythonSdkVersion '0.3.0'
 
         $resources = Join-Path $output 'resources\vision-runtime'
         foreach ($relative in @(
             'vision_runtime.dll',
+            'rp2350_hid_bridge.dll',
             'resources\vision-runtime\runtime-manifest.json',
             'resources\vision-runtime\model\best.onnx',
             'resources\vision-runtime\model\best.onnx.schema.json',
@@ -730,21 +751,28 @@ try {
         }
 
         $manifest = Get-Content -LiteralPath (Join-Path $resources 'runtime-manifest.json') -Raw | ConvertFrom-Json
-        Assert-Equal 1 $manifest.manifest_version 'app-local manifest version'
-        Assert-Equal '0.2.0' $manifest.package_version 'app-local package version'
-        Assert-Equal '0.2.0' $manifest.python_sdk.minimum 'minimum Python SDK version'
-        Assert-Equal '0.2.0' $manifest.python_sdk.recommended 'recommended Python SDK version'
+        Assert-Equal 2 $manifest.manifest_version 'app-local manifest version'
+        Assert-Equal '0.3.0' $manifest.package_version 'app-local package version'
+        Assert-Equal '0.3.0' $manifest.python_sdk.minimum 'minimum Python SDK version'
+        Assert-Equal '0.3.0' $manifest.python_sdk.recommended 'recommended Python SDK version'
         Assert-Equal 2 $manifest.dll.abi_major 'runtime ABI major'
-        Assert-Equal 0 $manifest.dll.abi_minor 'runtime ABI minor'
-        Assert-Equal 15 $manifest.dll.required_features 'runtime required feature flags'
+        Assert-Equal 1 $manifest.dll.abi_minor 'runtime ABI minor'
+        Assert-Equal 31 $manifest.dll.required_features 'runtime required feature flags'
         Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $output 'vision_runtime.dll')) ([string]$manifest.dll.sha256) 'runtime DLL hash'
+        Assert-Equal 'rp2350_hid_bridge.dll' $manifest.hid_bridge.dll.file_name 'HID DLL filename'
+        Assert-Equal 1 $manifest.hid_bridge.dll.abi_major 'HID ABI major'
+        Assert-Equal 0 $manifest.hid_bridge.dll.abi_minor 'HID ABI minor'
+        Assert-Equal '0.2.0' $manifest.hid_bridge.python_sdk.minimum 'minimum HID Python SDK version'
+        Assert-Equal '0.2.0' $manifest.hid_bridge.python_sdk.recommended 'recommended HID Python SDK version'
+        Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $output 'rp2350_hid_bridge.dll')) ([string]$manifest.hid_bridge.dll.sha256) 'HID DLL hash'
         Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $resources 'model\best.onnx')) ([string]$manifest.model.sha256) 'model hash'
         Assert-Equal (Get-FileSha256 -LiteralPath (Join-Path $resources 'model\best.onnx.schema.json')) ([string]$manifest.model.schema_sha256) 'schema hash'
         Assert-Equal '1.17.3' $manifest.components.onnxruntime 'ONNX Runtime component version'
         Assert-Equal '11.8' $manifest.components.cuda 'CUDA component version'
         Assert-Equal '8.9.7' $manifest.components.cudnn 'cuDNN component version'
         Assert-Equal '8.6.1.6' $manifest.components.tensorrt 'TensorRT component version'
-        Assert-True ([string]$manifest.runtime_id -match '^sm61-ort1173-trt861-fp32-[0-9A-F]{24}$') 'runtime ID must include stable DLL and model hashes'
+        Assert-True ([string]$manifest.runtime_id -match '^sm61-ort1173-trt861-fp32-[0-9A-F]{36}$') 'runtime ID must include stable DLL, HID DLL, and model hashes'
+        Assert-Equal 2 @(Get-ChildItem -LiteralPath $output -File -Filter '*.dll').Count 'app-local root must contain exactly two runtime DLLs'
 
         foreach ($path in @($manifest.model.path, $manifest.model.schema_path) + @($manifest.native_directories)) {
             Assert-True (-not [IO.Path]::IsPathRooted([string]$path)) "manifest path must be relative: $path"

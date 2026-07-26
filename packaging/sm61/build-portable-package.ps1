@@ -153,11 +153,17 @@ if (-not [string]::IsNullOrWhiteSpace($OrtRoot)) { $OrtRoot = [IO.Path]::GetFull
 if (-not (Test-Path -LiteralPath $ReleaseRoot -PathType Container)) {
     throw "Release output directory does not exist: $ReleaseRoot"
 }
-foreach ($name in @('vision_runtime.dll', 'vision_runtime.lib', 'vision_analyzer.exe')) {
+foreach ($name in @(
+    'vision_runtime.dll',
+    'vision_runtime.lib',
+    'vision_analyzer.exe',
+    'rp2350_hid_bridge.dll',
+    'rp2350_hid_bridge.lib'
+)) {
     Assert-LeafFile -LiteralPath (Join-Path $ReleaseRoot $name) -Description "Release output '$name'"
 }
-$visionRuntimePath = Join-Path $ReleaseRoot 'vision_runtime.dll'
-Assert-Rp2350ProtocolV2Binary -LiteralPath $visionRuntimePath
+$hidRuntimePath = Join-Path $ReleaseRoot 'rp2350_hid_bridge.dll'
+Assert-Rp2350SharedLibrary -LiteralPath $hidRuntimePath
 Assert-LeafFile -LiteralPath (Join-Path $repoRoot 'include\vision_analyzer\vision_runtime_c_api.h') -Description 'C API header'
 Assert-LeafFile -LiteralPath $ModelPath -Description 'Model'
 Assert-LeafFile -LiteralPath $SchemaPath -Description 'Model schema'
@@ -165,11 +171,18 @@ Assert-LeafFile -LiteralPath $SampleVideoPath -Description 'Sample video'
 Assert-LeafFile -LiteralPath $lockPath -Description 'Dependency lock'
 if (-not (Test-Path -LiteralPath $templateRoot -PathType Container)) { throw "Package template directory does not exist: $templateRoot" }
 $pythonPackageRoot = Join-Path $PythonProjectRoot 'src\cs2_vision_runtime'
+$hidSdkRoot = Join-Path $PythonProjectRoot 'tools\rp2350_hid_bridge_cpp'
+$hidCapiHeader = Join-Path $hidSdkRoot 'include\rp2350_hid_bridge\c_api.h'
+$hidPythonPackageRoot = Join-Path $PythonProjectRoot 'tools\rp2350_keymouse_bridge_firmware\sdk\python\rp2350_hid_bridge'
 $pythonExample = Join-Path $PythonProjectRoot 'examples\runtime_live_move.py'
 $pythonDxgiExample = Join-Path $PythonProjectRoot 'examples\runtime_dxgi_dryrun.py'
 $pythonSdkGuide = Join-Path $PythonProjectRoot 'docs\PYTHON_RUNTIME_SDK_INTEGRATION.md'
 foreach ($name in @('__init__.py', '_version.py', 'errors.py', 'package.py', 'runtime.py')) {
     Assert-LeafFile -LiteralPath (Join-Path $pythonPackageRoot $name) -Description "Python runtime package '$name'"
+}
+Assert-LeafFile -LiteralPath $hidCapiHeader -Description 'RP2350 HID C API header'
+foreach ($name in @('__init__.py', '_version.py', 'native.py', 'client.py')) {
+    Assert-LeafFile -LiteralPath (Join-Path $hidPythonPackageRoot $name) -Description "Python HID package '$name'"
 }
 Assert-LeafFile -LiteralPath $pythonExample -Description 'Python live runtime example'
 Assert-LeafFile -LiteralPath $pythonDxgiExample -Description 'Python DXGI dry-run example'
@@ -227,18 +240,29 @@ try {
     [IO.File]::WriteAllText((Join-Path $OutputRoot '.portable-package-root'), $profile, (New-Object Text.UTF8Encoding($false)))
     Copy-Item -Path (Join-Path $templateRoot '*') -Destination $OutputRoot -Recurse -Force
 
-    foreach ($relative in @('app', 'model', 'samples', 'python\cs2_vision_runtime', 'examples', 'docs', 'licenses', 'runtime\cuda-11.8', 'runtime\cudnn-8.9', 'runtime\tensorrt-8.6.1.6', 'runtime\msvc-x64', 'logs', 'cache\ort-trt-sm61-fp32')) {
+    foreach ($relative in @('app', 'model', 'samples', 'python\cs2_vision_runtime', 'python\rp2350_hid_bridge', 'examples', 'docs', 'licenses', 'runtime\cuda-11.8', 'runtime\cudnn-8.9', 'runtime\tensorrt-8.6.1.6', 'runtime\msvc-x64', 'logs', 'cache\ort-trt-sm61-fp32')) {
         New-Item -ItemType Directory -Path (Join-Path $OutputRoot $relative) -Force | Out-Null
     }
 
     $app = Join-Path $OutputRoot 'app'
-    foreach ($name in @('vision_runtime.dll', 'vision_runtime.lib', 'vision_analyzer.exe')) {
+    foreach ($name in @(
+        'vision_runtime.dll',
+        'vision_runtime.lib',
+        'vision_analyzer.exe',
+        'rp2350_hid_bridge.dll',
+        'rp2350_hid_bridge.lib'
+    )) {
         Copy-Item -LiteralPath (Join-Path $ReleaseRoot $name) -Destination (Join-Path $app $name) -Force
     }
     Copy-Item -LiteralPath (Join-Path $repoRoot 'include\vision_analyzer\vision_runtime_c_api.h') -Destination (Join-Path $app 'vision_runtime_c_api.h') -Force
+    Copy-Item -LiteralPath $hidCapiHeader -Destination (Join-Path $app 'rp2350_hid_bridge_c_api.h') -Force
     $pythonDestination = Join-Path $OutputRoot 'python\cs2_vision_runtime'
     foreach ($pythonFile in @(Get-ChildItem -LiteralPath $pythonPackageRoot -File -Filter '*.py')) {
         Copy-Item -LiteralPath $pythonFile.FullName -Destination (Join-Path $pythonDestination $pythonFile.Name) -Force
+    }
+    $hidPythonDestination = Join-Path $OutputRoot 'python\rp2350_hid_bridge'
+    foreach ($pythonFile in @(Get-ChildItem -LiteralPath $hidPythonPackageRoot -File -Filter '*.py')) {
+        Copy-Item -LiteralPath $pythonFile.FullName -Destination (Join-Path $hidPythonDestination $pythonFile.Name) -Force
     }
     Copy-Item -LiteralPath $pythonExample -Destination (Join-Path $OutputRoot 'examples\runtime_live_move.py') -Force
     Copy-Item -LiteralPath $pythonDxgiExample -Destination (Join-Path $OutputRoot 'examples\runtime_dxgi_dryrun.py') -Force
@@ -330,8 +354,8 @@ try {
     }
     $manifestComponents += [pscustomobject][ordered]@{
         id = 'rp2350-hid-sdk'
-        version = 'protocol-v2'
-        sourceMode = 'header-only-build'
+        version = 'abi-1.0-protocol-v2'
+        sourceMode = 'shared-library'
     }
     Write-PackageManifest -PackageRoot $OutputRoot -Profile $profile -Components @($manifestComponents)
     $manifestResult = Test-PackageManifest -PackageRoot $OutputRoot

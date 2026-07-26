@@ -125,9 +125,9 @@ function Assert-Rp2350ProtocolV2Manifest {
         throw '运行环境清单必须包含且只能包含一个 rp2350-hid-sdk protocol-v2 组件。'
     }
     $component = $matches[0]
-    if ([string]$component.version -ne 'protocol-v2' -or
-        [string]$component.sourceMode -ne 'header-only-build') {
-        throw '运行环境清单中的 rp2350-hid-sdk 必须为 protocol-v2 header-only-build。'
+    if ([string]$component.version -ne 'abi-1.0-protocol-v2' -or
+        [string]$component.sourceMode -ne 'shared-library') {
+        throw '运行环境清单中的 rp2350-hid-sdk 必须为 abi-1.0-protocol-v2 shared-library。'
     }
 }
 
@@ -191,6 +191,9 @@ function Get-RequiredRuntimeFiles {
         'app\vision_runtime.lib',
         'app\vision_analyzer.exe',
         'app\vision_runtime_c_api.h',
+        'app\rp2350_hid_bridge.dll',
+        'app\rp2350_hid_bridge.lib',
+        'app\rp2350_hid_bridge_c_api.h',
         'app\onnxruntime.dll',
         'app\onnxruntime_providers_shared.dll',
         'app\onnxruntime_providers_cuda.dll',
@@ -203,6 +206,10 @@ function Get-RequiredRuntimeFiles {
         'python\cs2_vision_runtime\errors.py',
         'python\cs2_vision_runtime\package.py',
         'python\cs2_vision_runtime\runtime.py',
+        'python\rp2350_hid_bridge\__init__.py',
+        'python\rp2350_hid_bridge\_version.py',
+        'python\rp2350_hid_bridge\native.py',
+        'python\rp2350_hid_bridge\client.py',
         'examples\runtime_live_move.py',
         'examples\runtime_dxgi_dryrun.py',
         'docs\PYTHON_RUNTIME_SDK_INTEGRATION.md',

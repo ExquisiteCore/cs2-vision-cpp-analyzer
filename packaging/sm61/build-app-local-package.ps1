@@ -6,7 +6,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $OutputRoot,
 
-    [string] $PythonSdkVersion = '0.2.0'
+    [string] $PythonSdkVersion = '0.3.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -152,9 +152,11 @@ if (Test-Path -LiteralPath $outputFullPath) {
 }
 
 $sourceDll = Join-Path $sourceRoot 'app\vision_runtime.dll'
+$sourceHidDll = Join-Path $sourceRoot 'app\rp2350_hid_bridge.dll'
 $sourceModel = Join-Path $sourceRoot 'model\best.onnx'
 $sourceSchema = Join-Path $sourceRoot 'model\best.onnx.schema.json'
 Assert-LeafFile -LiteralPath $sourceDll -Description 'Portable vision runtime DLL'
+Assert-LeafFile -LiteralPath $sourceHidDll -Description 'Portable RP2350 HID bridge DLL'
 Assert-LeafFile -LiteralPath $sourceModel -Description 'Portable model'
 Assert-LeafFile -LiteralPath $sourceSchema -Description 'Portable model schema'
 
@@ -185,6 +187,7 @@ try {
     New-Item -ItemType Directory -Path $nativeRoot -Force | Out-Null
 
     Copy-Item -LiteralPath $sourceDll -Destination (Join-Path $stageRoot 'vision_runtime.dll')
+    Copy-Item -LiteralPath $sourceHidDll -Destination (Join-Path $stageRoot 'rp2350_hid_bridge.dll')
     Copy-Item -LiteralPath $sourceModel -Destination (Join-Path $modelRoot 'best.onnx')
     Copy-Item -LiteralPath $sourceSchema -Destination (Join-Path $modelRoot 'best.onnx.schema.json')
 
@@ -209,12 +212,13 @@ try {
     }
 
     $dllHash = Get-FileSha256 -LiteralPath (Join-Path $stageRoot 'vision_runtime.dll')
+    $hidDllHash = Get-FileSha256 -LiteralPath (Join-Path $stageRoot 'rp2350_hid_bridge.dll')
     $modelHash = Get-FileSha256 -LiteralPath (Join-Path $modelRoot 'best.onnx')
     $schemaHash = Get-FileSha256 -LiteralPath (Join-Path $modelRoot 'best.onnx.schema.json')
-    $runtimeId = "$profileName-$($dllHash.Substring(0, 12))$($modelHash.Substring(0, 12))"
+    $runtimeId = "$profileName-$($dllHash.Substring(0, 12))$($hidDllHash.Substring(0, 12))$($modelHash.Substring(0, 12))"
 
     $manifest = [pscustomobject][ordered]@{
-        manifest_version = 1
+        manifest_version = 2
         package_version = $PythonSdkVersion
         runtime_id = $runtimeId
         profile = [pscustomobject][ordered]@{
@@ -232,8 +236,20 @@ try {
             file_name = 'vision_runtime.dll'
             sha256 = $dllHash
             abi_major = 2
-            abi_minor = 0
-            required_features = 15
+            abi_minor = 1
+            required_features = 31
+        }
+        hid_bridge = [pscustomobject][ordered]@{
+            dll = [pscustomobject][ordered]@{
+                file_name = 'rp2350_hid_bridge.dll'
+                sha256 = $hidDllHash
+                abi_major = 1
+                abi_minor = 0
+            }
+            python_sdk = [pscustomobject][ordered]@{
+                minimum = '0.2.0'
+                recommended = '0.2.0'
+            }
         }
         model = [pscustomobject][ordered]@{
             path = 'model/best.onnx'
